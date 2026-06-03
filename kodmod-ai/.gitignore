@@ -1,0 +1,58 @@
+# --- Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtual envs
+.venv/
+venv/
+env/
+
+# --- Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.coverage.*
+
+# --- Environment
+.env
+.env.local
+.env.*.local
+
+# --- Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- KODMOD-specific
+/var/lib/kodmod/
+/data/curriculum/*.cached/
+/audio_cache/
+
+# --- Docker / build artifacts
+*.log
+docker/grafana/*.json.tmp
+
+# --- OS junk
+.DS_Store
+Thumbs.db

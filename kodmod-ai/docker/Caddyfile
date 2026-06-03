@@ -1,0 +1,29 @@
+# KODMOD AI — Caddy reverse proxy
+# Replace `kodmod.example.com` with your real hostname.
+
+{
+    email admin@kodmod.example.com
+}
+
+kodmod.example.com {
+    encode zstd gzip
+
+    # WebSocket upgrade for /ws/voice — Caddy handles this transparently.
+    reverse_proxy api:8000 {
+        flush_interval -1
+        transport http {
+            keepalive 30s
+            keepalive_idle_conns 64
+        }
+    }
+
+    @health path /health/*
+    handle @health {
+        reverse_proxy api:8000
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

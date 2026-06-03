@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kodmod-postgres
+    environment:
+      POSTGRES_USER: kodmod
+      POSTGRES_PASSWORD: kodmod
+      POSTGRES_DB: kodmod
+    ports:
+      - "5432:5432"
+    volumes:
+      - kodmod-pgdata:/var/lib/postgresql/data
+      - ../database/schema.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kodmod -d kodmod"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kodmod-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - kodmod-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.10.1
+    container_name: kodmod-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - kodmod-qdrantdata:/qdrant/storage
+    profiles: ["qdrant"]
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: kodmod-api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    env_file:
+      - ../.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - kodmod-audio:/var/lib/kodmod/audio
+      - kodmod-uploads:/var/lib/kodmod/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  kodmod-pgdata:
+  kodmod-redisdata:
+  kodmod-qdrantdata:
+  kodmod-audio:
+  kodmod-uploads:
