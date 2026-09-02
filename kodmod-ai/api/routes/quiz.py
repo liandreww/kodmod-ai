@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Request
 
 from api.dependencies import current_student
 from config.settings import settings
-from graphs.state import initial_state
+from graphs.state import build_learning_profile, initial_state
 from models.quiz import QuizStartRequest, QuizStartResponse, QuizSubmitRequest, QuizSubmitResponse
 from models.student import StudentOut
 
@@ -35,12 +35,12 @@ async def start_quiz(
     Returns the first question (text + audio URI).
     """
     sid = str(uuid4())
-    state = initial_state(session_id=sid, student_id=student.id)
+    state = initial_state(session_id=sid, student_id=str(student.id))
     state["intent"] = "quiz"
-    state["current_concept_id"] = body.concept_id
+    state["current_concept_id"] = str(body.concept_id) if body.concept_id else ""
     state["current_difficulty"] = body.difficulty or "medium"
-    state["mastery_scores"] = await _load_mastery(student.id)
-    state["learning_profile"] = student.profile
+    state["mastery_scores"] = await _load_mastery(str(student.id))
+    state["learning_profile"] = build_learning_profile(student)
 
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": sid}}

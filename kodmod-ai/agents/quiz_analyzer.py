@@ -22,7 +22,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from graphs.state import KODMODState
+from graphs.state import KODMODState, QuizQuestion
 from tools.llm_client import get_scoring_llm
 
 log = logging.getLogger(__name__)
@@ -65,9 +65,9 @@ async def quiz_analyzer_node(state: KODMODState) -> dict[str, Any]:
 
     # ---- Pre-compute deterministic stats so the LLM doesn't have to ------
     by_concept: dict[str, list[float]] = defaultdict(list)
-    q_by_id = {q.get("question_id"): q for q in questions}
+    q_by_id: dict[object, QuizQuestion] = {q.get("question_id"): q for q in questions}
     for a in attempts:
-        q = q_by_id.get(a.get("question_id"), {})
+        q: QuizQuestion = q_by_id.get(a.get("question_id"), {})
         cid = q.get("concept_id", "unknown")
         by_concept[cid].append(a.get("score", 0.0))
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -133,7 +134,7 @@ async def describe_image(
     try:
         b64 = base64.b64encode(image_bytes).decode("ascii")
         llm = get_tutor_llm()
-        user_content = [
+        user_content: list[str | dict[Any, Any]] = [
             {
                 "type": "text",
                 "text": (extra_context or "Deskripsikan gambar ini untuk siswa tunanetra."),

@@ -146,11 +146,9 @@ async def _deepgram_stt(path: str) -> tuple[str, str]:
 
 
 def _ensure_local(uri: str) -> str:
-    """Download remote URIs to a temp file and return a local path."""
+    """Return a local filesystem path for an audio URI (local paths only)."""
     if uri.startswith(("http://", "https://", "s3://", "minio://")):
-        from voice.streaming import fetch_audio
-
-        return fetch_audio(uri)
+        raise NotImplementedError("remote audio URIs are not supported for STT input")
     return uri
 
 

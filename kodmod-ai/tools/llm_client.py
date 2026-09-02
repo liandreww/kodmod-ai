@@ -39,7 +39,7 @@ def _provider() -> str:
 def _anthropic(model: str, **kwargs: Any):
     from langchain_anthropic import ChatAnthropic
 
-    return ChatAnthropic(
+    return ChatAnthropic(  # type: ignore[call-arg]  # valid runtime kwargs; stub is stricter
         model=model,
         temperature=kwargs.get("temperature", 0.4),
         max_tokens=kwargs.get("max_tokens", 1024),
@@ -50,7 +50,7 @@ def _anthropic(model: str, **kwargs: Any):
 def _openai(model: str, **kwargs: Any):
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(
+    return ChatOpenAI(  # type: ignore[call-arg]  # valid runtime kwargs; stub is stricter
         model=model,
         temperature=kwargs.get("temperature", 0.4),
         max_tokens=kwargs.get("max_tokens", 1024),
@@ -72,10 +72,10 @@ def _vllm(model: str, **kwargs: Any):
     """For self-hosted vLLM endpoints, use the OpenAI-compatible client."""
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(
+    return ChatOpenAI(  # type: ignore[call-arg]  # valid runtime kwargs; stub is stricter
         model=model,
         base_url=os.getenv("VLLM_BASE_URL", "http://vllm:8000/v1"),
-        api_key="EMPTY",
+        api_key="EMPTY",  # type: ignore[arg-type]  # str is accepted at runtime
         temperature=kwargs.get("temperature", 0.4),
         max_tokens=kwargs.get("max_tokens", 1024),
         streaming=kwargs.get("streaming", True),

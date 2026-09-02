@@ -27,9 +27,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
-from graphs.state import KODMODState
+from graphs.state import KODMODState, RetrievedDoc
 from tools.llm_client import get_tutor_llm
 
 log = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ async def tutoring_node(state: KODMODState) -> dict[str, Any]:
 
     # ---- Build conversational history (last 6 turns) ----------------------
     history = state.get("tutoring_context", [])[-6:]
-    history_msgs = []
+    history_msgs: list[BaseMessage] = []
     for turn in history:
         role = turn.get("role", "student")
         content = turn.get("text", "")
@@ -136,7 +136,7 @@ async def tutoring_node(state: KODMODState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _format_retrieved(docs: list[dict]) -> str:
+def _format_retrieved(docs: list[RetrievedDoc]) -> str:
     """Render retrieved chunks as a numbered list the LLM can ground on."""
     if not docs:
         return "(no curriculum context retrieved)"

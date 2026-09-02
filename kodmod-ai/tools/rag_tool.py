@@ -108,7 +108,7 @@ class RAGTool:
             docs = await self.retrieve(query)
             return "\n---\n".join(f"[{d['source']}] {d['text']}" for d in docs)
 
-        return Tool(
+        return Tool(  # type: ignore[call-arg]  # async-only Tool: coroutine set, func omitted
             name="curriculum_search",
             description=(
                 "Search the KODMOD curriculum knowledge base. "

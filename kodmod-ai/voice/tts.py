@@ -65,9 +65,8 @@ async def tts_node(state: KODMODState) -> dict[str, Any]:
     if not text:
         return {"audio_response_path": "", "next_action": "end", "last_node": "tts"}
 
-    voice = state.get("learning_profile", {}).get("preferred_voice") or os.getenv(
-        "KODMOD_TTS_VOICE", "id-ID-ArdiNeural"
-    )
+    lp = state.get("learning_profile") or {}
+    voice: str = str(lp.get("preferred_voice") or os.getenv("KODMOD_TTS_VOICE", "id-ID-ArdiNeural"))
     backend = os.getenv("KODMOD_TTS_BACKEND", "piper")
 
     if backend == "azure":

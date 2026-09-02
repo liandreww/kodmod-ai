@@ -197,6 +197,24 @@ class KODMODState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 
+def build_learning_profile(student: Any) -> LearningProfile:
+    """Build a ``LearningProfile`` from a ``Student`` ORM row or ``StudentOut`` schema.
+
+    Duck-typed on purpose: routes hand us the Pydantic ``StudentOut`` while the
+    WebSocket handler has the ORM object. Only keys we actually have data for are
+    set (``LearningProfile`` is ``total=False``); consumers read via ``.get(...)``.
+    """
+    vs = getattr(student, "voice_settings", None) or {}
+    profile: LearningProfile = {
+        "language": str(getattr(student, "preferred_language", None) or "id"),
+        "accessibility": {"profile": getattr(student, "accessibility_profile", None) or "blind"},
+    }
+    voice = vs.get("preferred_voice") or vs.get("voice")
+    if voice:
+        profile["preferred_voice"] = str(voice)
+    return profile
+
+
 def initial_state(
     session_id: str,
     student_id: str,

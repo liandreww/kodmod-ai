@@ -32,7 +32,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from api.dependencies import authenticate_ws
 from graphs.main_graph import run_turn
-from graphs.state import initial_state
+from graphs.state import build_learning_profile, initial_state
 from voice.streaming import StreamingSTT, stream_tts
 
 log = logging.getLogger(__name__)
@@ -63,12 +63,12 @@ async def voice_ws(websocket: WebSocket):
             # ---- Phase 2: drive LangGraph for one turn -------------------
             state = initial_state(
                 session_id=session_id,
-                student_id=student.id,
+                student_id=str(student.id),
                 audio_input_path="",  # we already transcribed
             )
             state["transcribed_text"] = transcript
             state["user_input"] = transcript
-            state["learning_profile"] = student.profile
+            state["learning_profile"] = build_learning_profile(student)
 
             graph = websocket.app.state.graph
             config = {"configurable": {"thread_id": session_id}}
@@ -94,7 +94,8 @@ async def voice_ws(websocket: WebSocket):
                 elif kind == "on_chain_end" and event["name"] == "accessibility":
                     # Start streaming TTS as soon as accessibility node completes
                     final_text = event["data"]["output"].get("accessible_response", "")
-                    await stream_tts(websocket, final_text)
+                    async for frame in stream_tts(final_text):
+                        await websocket.send_bytes(frame)
 
                 elif kind == "on_chain_end" and event["name"] == "tts":
                     audio_uri = event["data"]["output"].get("audio_response_path", "")

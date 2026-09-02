@@ -112,7 +112,7 @@ async def update_mastery(
 ) -> None:
     """UPSERT the mastery row for (student, concept)."""
     async with async_session() as session:
-        stmt = pg_insert(MasteryScore.__table__).values(
+        stmt = pg_insert(MasteryScore.__table__).values(  # type: ignore[arg-type]
             student_id=student_id,
             concept_id=concept_id,
             mastery=new_mastery,

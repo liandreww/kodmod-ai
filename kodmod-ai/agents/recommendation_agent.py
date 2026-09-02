@@ -24,7 +24,7 @@ import json
 import logging
 from typing import Any
 
-from graphs.state import KODMODState
+from graphs.state import AnalyticsSummary, KODMODState
 from tools.llm_client import get_recommendation_llm
 
 log = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _fallback(summary: dict) -> dict:
+def _fallback(summary: AnalyticsSummary) -> dict:
     weak = summary.get("weak_concepts", [])
     if weak:
         return {

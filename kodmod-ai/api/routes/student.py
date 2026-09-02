@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,7 +77,7 @@ async def get_student_profile(
         email=student.email,
         grade_level=student.grade_level,
         accessibility_profile=student.accessibility_profile,
-        preferred_language=student.preferred_language,
+        preferred_language=cast(Literal["id", "en"], student.preferred_language),
         voice_settings=student.voice_settings or {},
         created_at=student.created_at,
         updated_at=student.updated_at,

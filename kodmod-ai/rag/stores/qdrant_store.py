@@ -78,7 +78,7 @@ async def query(
 ) -> list[dict]:
     from qdrant_client.http.models import FieldCondition, Filter, MatchValue  # type: ignore
 
-    must = []
+    must: list = []
     if concept_id:
         must.append(FieldCondition(key="concept_id", match=MatchValue(value=str(concept_id))))
     if language:

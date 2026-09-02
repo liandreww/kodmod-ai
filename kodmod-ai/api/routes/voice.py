@@ -16,7 +16,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from api.dependencies import current_student
-from graphs.state import initial_state
+from graphs.state import build_learning_profile, initial_state
 from models.student import StudentOut
 from voice.streaming import save_upload
 
@@ -43,10 +43,10 @@ async def voice_chat(
 
     state = initial_state(
         session_id=sid,
-        student_id=student.id,
+        student_id=str(student.id),
         audio_input_path=str(audio_path),
     )
-    state["learning_profile"] = student.profile
+    state["learning_profile"] = build_learning_profile(student)
 
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": sid}}
@@ -76,10 +76,10 @@ async def voice_text(
     student: StudentOut = Depends(current_student),
 ):
     sid = session_id or str(uuid4())
-    state = initial_state(session_id=sid, student_id=student.id)
+    state = initial_state(session_id=sid, student_id=str(student.id))
     state["transcribed_text"] = text
     state["user_input"] = text
-    state["learning_profile"] = student.profile
+    state["learning_profile"] = build_learning_profile(student)
 
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": sid}}

@@ -309,7 +309,7 @@ async def _stream_azure(text: str, voice: str) -> AsyncIterator[bytes]:
         "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream("POST", url, headers=headers, data=ssml) as r:
+        async with client.stream("POST", url, headers=headers, content=ssml) as r:
             r.raise_for_status()
             async for chunk in r.aiter_bytes(chunk_size=4096):
                 yield chunk

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from graphs.state import DifficultyLevel, KODMODState, QuizQuestion
@@ -176,7 +176,7 @@ async def generate_questions_for_student(
         "student_id": str(student_id),
         "current_concept_id": str(concept_id) if concept_id else "",
         "current_topic": topic_hint or "",
-        "current_difficulty": difficulty_hint or "medium",
+        "current_difficulty": cast(DifficultyLevel, difficulty_hint or "medium"),
         "mastery_scores": {},
     }
     result = await problem_generator_node(state)

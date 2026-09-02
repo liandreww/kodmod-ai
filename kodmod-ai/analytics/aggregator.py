@@ -23,7 +23,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, cast
 
 from sqlalchemy import func, select
 
@@ -127,9 +127,12 @@ class StudentAggregator:
         # ---------- Compute rollups ----------
         n_sessions = len(sessions)
         total_minutes = sum(
-            ((s.ended_at or s.started_at) - s.started_at).total_seconds() / 60.0
-            for s in sessions
-            if s.started_at
+            (
+                ((s.ended_at or s.started_at) - s.started_at).total_seconds() / 60.0
+                for s in sessions
+                if s.started_at
+            ),
+            0.0,
         )
 
         n_attempts = len(attempts)
@@ -248,7 +251,7 @@ class ClassroomAggregator:
                 {"concept_name": k, "avg_mastery": sum(v) / len(v), "n_students": len(v)}
                 for k, v in concept_to_scores.items()
             ),
-            key=lambda x: x["avg_mastery"],
+            key=lambda x: cast(float, x["avg_mastery"]),
         )[:5]
 
         return {

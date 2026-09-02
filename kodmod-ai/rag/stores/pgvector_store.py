@@ -117,7 +117,7 @@ async def delete_by_source(source: str) -> int:
     sql = text("DELETE FROM curriculum_chunks WHERE source = :source")
     async with async_session() as session:
         res = await session.execute(sql, {"source": source})
-    return res.rowcount or 0
+    return res.rowcount or 0  # type: ignore[attr-defined]  # CursorResult has rowcount
 
 
 class PgVectorStore:

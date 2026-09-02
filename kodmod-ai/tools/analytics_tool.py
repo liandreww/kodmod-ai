@@ -29,7 +29,7 @@ class StudentAnalyticsInput(BaseModel):
 async def fetch_student_analytics(
     student_id: str,
     *,
-    window: str = "week",
+    window: Literal["today", "week", "month", "all"] = "week",
     include_recommendations: bool = True,
 ) -> dict:
     from analytics.aggregator import StudentAggregator
@@ -61,7 +61,9 @@ class ClassroomAnalyticsInput(BaseModel):
     window: Literal["week", "month", "all"] = "week"
 
 
-async def fetch_classroom_analytics(classroom_id: str, *, window: str = "week") -> dict:
+async def fetch_classroom_analytics(
+    classroom_id: str, *, window: Literal["today", "week", "month", "all"] = "week"
+) -> dict:
     from analytics.aggregator import ClassroomAggregator
 
     return await ClassroomAggregator().summarise(
