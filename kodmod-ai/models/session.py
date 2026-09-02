@@ -1,9 +1,9 @@
 """Pydantic schemas for learning sessions."""
+
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,9 +17,9 @@ class SessionOut(BaseModel):
     id: uuid.UUID
     student_id: uuid.UUID
     started_at: datetime
-    ended_at: Optional[datetime] = None
+    ended_at: datetime | None = None
     mode: str
-    summary: Optional[str] = None
+    summary: str | None = None
 
     class Config:
         from_attributes = True
@@ -29,7 +29,7 @@ class VoiceChatRequest(BaseModel):
     """Text fallback for /voice/text — when audio upload is not feasible."""
 
     student_id: uuid.UUID
-    session_id: Optional[uuid.UUID] = None
+    session_id: uuid.UUID | None = None
     text: str
     language: str = "id"
 
@@ -38,6 +38,6 @@ class VoiceChatResponse(BaseModel):
     session_id: uuid.UUID
     intent: str
     response_text: str
-    response_audio_url: Optional[str] = None
+    response_audio_url: str | None = None
     latency_ms: int = 0
     metadata: dict = Field(default_factory=dict)

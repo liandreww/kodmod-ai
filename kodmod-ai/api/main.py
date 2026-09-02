@@ -17,6 +17,7 @@ Lifespan
 On startup: builds the LangGraph, opens DB pools, warms up models.
 On shutdown: drains in-flight WebSockets and closes pools cleanly.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,15 +25,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from prometheus_client import make_asgi_app
 
-from api.routes import voice, quiz, student, analytics, exercise, content, health
+from api.routes import analytics, content, exercise, health, quiz, student, voice
 from api.websockets import voice_stream
 from config.logging import configure_logging
 from config.settings import settings
 from database.session import close_db, init_db
 from graphs.main_graph import build_kodmod_graph
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 log = logging.getLogger(__name__)
 

@@ -25,15 +25,16 @@ The agent operates in two modes:
 * **LLM path** — invoked only when fast-path heuristics flag risky output
   (lots of formatting, very long, or simplification requested).
 """
+
 from __future__ import annotations
 
 import logging
 import re
 from typing import Any
 
-from graphs.state import KODMODState
-from accessibility.simplifier import simplify_with_llm
 from accessibility.narration import describe_visuals_in_text
+from accessibility.simplifier import simplify_with_llm
+from graphs.state import KODMODState
 
 log = logging.getLogger(__name__)
 
@@ -84,11 +85,10 @@ async def accessibility_node(state: KODMODState) -> dict[str, Any]:
     if simplify or _should_simplify(cleaned):
         cleaned = await simplify_with_llm(
             cleaned,
-            target_grade=int(profile.get("target_grade", 7)),
+            target_grade_level=str(profile.get("target_grade", 7)),
         )
 
-    log.info("Accessibility polish: %d → %d chars (simplify=%s)",
-             len(text), len(cleaned), simplify)
+    log.info("Accessibility polish: %d → %d chars (simplify=%s)", len(text), len(cleaned), simplify)
 
     return {
         "accessible_response": cleaned,
@@ -100,6 +100,7 @@ async def accessibility_node(state: KODMODState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Pure transformations
 # ---------------------------------------------------------------------------
+
 
 def _strip_markdown(text: str) -> str:
     text = _MARKDOWN.sub("", text)
@@ -115,6 +116,7 @@ def _replace_visual_refs(text: str) -> str:
 
 def _split_long_sentences(text: str) -> str:
     """Insert breaks in sentences over ~120 chars at the nearest comma."""
+
     def splitter(match: re.Match) -> str:
         sentence = match.group(1)
         terminator = match.group(2)
@@ -122,8 +124,9 @@ def _split_long_sentences(text: str) -> str:
         head = sentence[:120]
         idx = head.rfind(",")
         if idx > 40:
-            return f"{sentence[:idx]}.{sentence[idx+1:]}{terminator} "
+            return f"{sentence[:idx]}.{sentence[idx + 1 :]}{terminator} "
         return match.group(0)
+
     return _LONG_SENTENCE.sub(splitter, text)
 
 

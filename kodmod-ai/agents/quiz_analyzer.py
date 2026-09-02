@@ -14,6 +14,7 @@ current session and produces:
 This agent does NOT write to the database directly — that's the
 `update_student_model` node's job. Analyzer only enriches state.
 """
+
 from __future__ import annotations
 
 import json
@@ -77,18 +78,15 @@ async def quiz_analyzer_node(state: KODMODState) -> dict[str, Any]:
     for a in attempts:
         q = q_by_id.get(a.get("question_id"), {})
         dossier_lines.append(
-            f"- concept={q.get('concept_id','?')} "
-            f"q='{q.get('text','')[:80]}' "
-            f"answer='{a.get('student_answer','')[:80]}' "
-            f"score={a.get('score',0):.2f} "
+            f"- concept={q.get('concept_id', '?')} "
+            f"q='{q.get('text', '')[:80]}' "
+            f"answer='{a.get('student_answer', '')[:80]}' "
+            f"score={a.get('score', 0):.2f} "
             f"correct={a.get('is_correct', False)}"
         )
     dossier = "\n".join(dossier_lines)
 
-    user_block = (
-        f"Concept averages: {json.dumps(concept_avg)}\n\n"
-        f"Attempts:\n{dossier}"
-    )
+    user_block = f"Concept averages: {json.dumps(concept_avg)}\n\nAttempts:\n{dossier}"
 
     llm = get_scoring_llm()
     response = await llm.ainvoke(
@@ -100,7 +98,9 @@ async def quiz_analyzer_node(state: KODMODState) -> dict[str, Any]:
     raw = response.content if hasattr(response, "content") else str(response)
 
     try:
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         analysis = json.loads(cleaned)
     except json.JSONDecodeError:
         log.warning("Analyzer JSON parse failed; using defaults")
@@ -109,9 +109,7 @@ async def quiz_analyzer_node(state: KODMODState) -> dict[str, Any]:
             "weak_concepts": [c for c, s in concept_avg.items() if s < 0.6],
             "strong_concepts": [c for c, s in concept_avg.items() if s >= 0.8],
             "remediation": ["Tinjau kembali konsep yang lemah."],
-            "spoken_summary": (
-                "Kuis selesai. Mari kita tinjau bagian yang masih perlu latihan."
-            ),
+            "spoken_summary": ("Kuis selesai. Mari kita tinjau bagian yang masih perlu latihan."),
             "teacher_summary": "Analyzer fallback — see raw concept averages.",
         }
 

@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import update
 
@@ -48,8 +47,8 @@ async def log_quiz_attempt(
     score: float,
     is_correct: bool,
     confidence: float = 0.0,
-    feedback: Optional[str] = None,
-    response_latency_ms: Optional[int] = None,
+    feedback: str | None = None,
+    response_latency_ms: int | None = None,
 ) -> uuid.UUID:
     async with async_session() as session:
         attempt = QuizAttempt(
@@ -69,8 +68,8 @@ async def log_quiz_attempt(
 
 async def save_analytics_report(
     *,
-    student_id: Optional[uuid.UUID] = None,
-    classroom_id: Optional[uuid.UUID] = None,
+    student_id: uuid.UUID | None = None,
+    classroom_id: uuid.UUID | None = None,
     report_type: str,
     payload: dict,
 ) -> uuid.UUID:

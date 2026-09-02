@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import uuid
 from functools import lru_cache
-from typing import Optional
 
 from config.settings import settings
 
@@ -74,8 +73,8 @@ async def query(
     embedding: list[float],
     *,
     top_k: int = 8,
-    concept_id: Optional[uuid.UUID] = None,
-    language: Optional[str] = None,
+    concept_id: uuid.UUID | None = None,
+    language: str | None = None,
 ) -> list[dict]:
     from qdrant_client.http.models import FieldCondition, Filter, MatchValue  # type: ignore
 

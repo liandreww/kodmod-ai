@@ -22,11 +22,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import uuid
 from collections import deque
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator, Deque, Optional
 
 from config.settings import settings
 
@@ -34,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------- file --
-async def save_upload(upload_file, dest_dir: Optional[Path] = None) -> Path:
+async def save_upload(upload_file, dest_dir: Path | None = None) -> Path:
     """
     Save a Starlette/FastAPI UploadFile to disk and return the path.
     Uses streaming reads to avoid materialising large files in memory.
@@ -95,13 +94,13 @@ class StreamingSTT:
     def __init__(
         self,
         sample_rate: int = 16_000,
-        language: Optional[str] = None,
-        model_size: Optional[str] = None,
+        language: str | None = None,
+        model_size: str | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.language = language or settings.STT_LANGUAGE
         self.model_size = model_size or settings.STT_MODEL
-        self._buffer: Deque[bytes] = deque()
+        self._buffer: deque[bytes] = deque()
         self._buffered_bytes = 0
         self._max_buffer_bytes = sample_rate * 2 * 6  # 6 s of 16-bit mono
         self._lock = asyncio.Lock()
@@ -131,9 +130,13 @@ class StreamingSTT:
                 compute_type = settings.STT_COMPUTE_TYPE if device == "cuda" else "int8"
                 logger.info(
                     "Loading faster-whisper model=%s device=%s compute=%s",
-                    self.model_size, device, compute_type,
+                    self.model_size,
+                    device,
+                    compute_type,
                 )
-                self._model = WhisperModel(self.model_size, device=device, compute_type=compute_type)
+                self._model = WhisperModel(
+                    self.model_size, device=device, compute_type=compute_type
+                )
             else:
                 # Other backends are wrapped at request boundary in voice/stt.py.
                 # For streaming, we lazily fall back to a single-shot transcribe.
@@ -175,7 +178,7 @@ class StreamingSTT:
         partial = await self._transcribe(audio_bytes, partial=True)
         return {"partial": partial, "final": None, "is_speaking": True}
 
-    async def flush_segment(self) -> Optional[str]:
+    async def flush_segment(self) -> str | None:
         """
         Mark current buffer as a finalized utterance. Drains the buffer.
         Called by the WS handler when client signals end-of-utterance
@@ -193,12 +196,12 @@ class StreamingSTT:
             self._final_segments.append(text)
         return text
 
-    async def close(self) -> Optional[str]:
+    async def close(self) -> str | None:
         """Final flush and tear down."""
         self._closed = True
         return await self.flush_segment()
 
-    async def _transcribe(self, audio_bytes: bytes, partial: bool) -> Optional[str]:
+    async def _transcribe(self, audio_bytes: bytes, partial: bool) -> str | None:
         await self._ensure_model()
         if self._model is None or self._model == "external":
             # Defer to non-streaming path
@@ -234,7 +237,7 @@ class StreamingSTT:
 
 
 # ------------------------------------------------------------- streaming TTS --
-async def stream_tts(text: str, voice: Optional[str] = None) -> AsyncIterator[bytes]:
+async def stream_tts(text: str, voice: str | None = None) -> AsyncIterator[bytes]:
     """
     Async-generate audio frames for the given text.
     Frames are small (≈40 ms) MP3/Opus chunks suitable for direct WS forwarding.
@@ -299,10 +302,7 @@ async def _stream_azure(text: str, voice: str) -> AsyncIterator[bytes]:
     import httpx
 
     url = f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
-    ssml = (
-        f'<speak version="1.0" xml:lang="id-ID">'
-        f'<voice name="{voice}">{text}</voice></speak>'
-    )
+    ssml = f'<speak version="1.0" xml:lang="id-ID"><voice name="{voice}">{text}</voice></speak>'
     headers = {
         "Ocp-Apim-Subscription-Key": api_key,
         "Content-Type": "application/ssml+xml",

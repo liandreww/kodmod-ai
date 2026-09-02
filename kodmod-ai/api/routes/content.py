@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -34,13 +33,14 @@ router = APIRouter()
 
 @router.get("/concepts", response_model=list[ConceptOut])
 async def list_concepts(
-    subject_id: Optional[uuid.UUID] = Query(None),
+    subject_id: uuid.UUID | None = Query(None),
     session: AsyncSession = Depends(db_session),
 ) -> list[Concept]:
+    """List curriculum concepts, optionally filtered by subject."""
     stmt = select(Concept)
     if subject_id:
         stmt = stmt.where(Concept.subject_id == subject_id)
-    return (await session.execute(stmt)).scalars().all()
+    return list((await session.execute(stmt)).scalars().all())
 
 
 @router.get("/concepts/{concept_id}", response_model=ConceptOut)
@@ -48,6 +48,7 @@ async def get_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
 ) -> Concept:
+    """Return details for a single concept by id."""
     concept = await session.get(Concept, concept_id)
     if concept is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Concept not found")
@@ -59,14 +60,18 @@ async def lessons_for_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
 ) -> list[Lesson]:
+    """List the lessons that belong to a concept."""
     rows = (
-        await session.execute(select(Lesson).where(Lesson.concept_id == concept_id))
-    ).scalars().all()
-    return rows
+        (await session.execute(select(Lesson).where(Lesson.concept_id == concept_id)))
+        .scalars()
+        .all()
+    )
+    return list(rows)
 
 
 @router.post("/retrieve", response_model=ContentRetrieveResponse)
 async def retrieve_content(payload: ContentRetrieveRequest) -> ContentRetrieveResponse:
+    """Run RAG retrieval directly and return the grounding chunks (debug/tooling)."""
     chunks = await retrieve(
         payload.query,
         top_k=payload.top_k,

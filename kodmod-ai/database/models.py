@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import (
     JSON,
@@ -48,8 +47,8 @@ class Student(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True)
-    grade_level: Mapped[Optional[str]] = mapped_column(String(50))
+    email: Mapped[str | None] = mapped_column(String(255), unique=True)
+    grade_level: Mapped[str | None] = mapped_column(String(50))
     accessibility_profile: Mapped[str] = mapped_column(String(50), default="blind")
     preferred_language: Mapped[str] = mapped_column(String(8), default="id")
     voice_settings: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -68,7 +67,7 @@ class Teacher(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True)
-    subject_specialty: Mapped[Optional[str]] = mapped_column(String(100))
+    subject_specialty: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -80,7 +79,7 @@ class Classroom(Base):
     teacher_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="SET NULL")
     )
-    grade_level: Mapped[Optional[str]] = mapped_column(String(50))
+    grade_level: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -90,7 +89,7 @@ class Subject(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
 
 
 class Concept(Base):
@@ -100,7 +99,7 @@ class Concept(Base):
     subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("subjects.id"))
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(200), unique=True)
-    description: Mapped[Optional[str]] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
     prerequisite_ids: Mapped[list] = mapped_column(JSON, default=list)
     difficulty_level: Mapped[str] = mapped_column(String(20), default="medium")
 
@@ -112,7 +111,7 @@ class Lesson(Base):
     concept_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("concepts.id"))
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     body_md: Mapped[str] = mapped_column(Text, nullable=False)
-    audio_friendly_summary: Mapped[Optional[str]] = mapped_column(Text)
+    audio_friendly_summary: Mapped[str | None] = mapped_column(Text)
     estimated_minutes: Mapped[int] = mapped_column(Integer, default=10)
     accessibility_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
 
@@ -126,10 +125,10 @@ class Exercise(Base):
     question_type: Mapped[str] = mapped_column(String(40), default="spoken")
     options: Mapped[list] = mapped_column(JSON, default=list)
     correct_answer: Mapped[str] = mapped_column(Text, nullable=False)
-    rubric: Mapped[Optional[dict]] = mapped_column(JSON)
+    rubric: Mapped[dict | None] = mapped_column(JSON)
     difficulty: Mapped[str] = mapped_column(String(20), default="medium")
     is_audio_friendly: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("teachers.id")
     )
     is_generated: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -145,9 +144,9 @@ class LearningSession(Base):
         UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE")
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     mode: Mapped[str] = mapped_column(String(40), default="tutoring")
-    summary: Mapped[Optional[str]] = mapped_column(Text)
+    summary: Mapped[str | None] = mapped_column(Text)
 
     student = relationship("Student", back_populates="sessions")
     interactions = relationship("InteractionLog", back_populates="session")
@@ -162,10 +161,10 @@ class InteractionLog(Base):
     )
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     role: Mapped[str] = mapped_column(String(20))  # student | assistant | system
-    intent: Mapped[Optional[str]] = mapped_column(String(40))
+    intent: Mapped[str | None] = mapped_column(String(40))
     text: Mapped[str] = mapped_column(Text)
-    audio_path: Mapped[Optional[str]] = mapped_column(String(500))
-    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    audio_path: Mapped[str | None] = mapped_column(String(500))
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
     session = relationship("LearningSession", back_populates="interactions")
@@ -177,14 +176,14 @@ class QuizSession(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     student_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id"))
-    concept_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    concept_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("concepts.id")
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_questions: Mapped[int] = mapped_column(Integer, default=0)
     correct_count: Mapped[int] = mapped_column(Integer, default=0)
-    final_score: Mapped[Optional[float]] = mapped_column(Float)
+    final_score: Mapped[float | None] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(20), default="in_progress")
 
 
@@ -200,7 +199,7 @@ class QuizQuestion(Base):
     question_type: Mapped[str] = mapped_column(String(40))
     options: Mapped[list] = mapped_column(JSON, default=list)
     correct_answer: Mapped[str] = mapped_column(Text)
-    concept_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    concept_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("concepts.id")
     )
     difficulty: Mapped[str] = mapped_column(String(20), default="medium")
@@ -220,8 +219,8 @@ class QuizAttempt(Base):
     score: Mapped[float] = mapped_column(Float, default=0.0)
     is_correct: Mapped[bool] = mapped_column(Boolean, default=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    feedback: Mapped[Optional[str]] = mapped_column(Text)
-    response_latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    feedback: Mapped[str | None] = mapped_column(Text)
+    response_latency_ms: Mapped[int | None] = mapped_column(Integer)
     answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -257,10 +256,10 @@ class AnalyticsReport(Base):
     __tablename__ = "analytics_reports"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    student_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    student_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("students.id")
     )
-    classroom_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    classroom_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("classrooms.id")
     )
     report_type: Mapped[str] = mapped_column(String(40))  # student | classroom | weekly
@@ -276,7 +275,7 @@ class Recommendation(Base):
     kind: Mapped[str] = mapped_column(String(40))  # next_lesson | practice | habit
     title: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
-    target_concept_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    target_concept_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("concepts.id")
     )
     priority: Mapped[int] = mapped_column(Integer, default=1)

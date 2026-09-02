@@ -22,20 +22,20 @@ import json
 import logging
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar
 
 from config.settings import settings
 
 # Per-request context that any logger can read without explicit passing.
-_session_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_session_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kodmod_session", default=None
 )
-_student_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_student_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kodmod_student", default=None
 )
 
 
-def set_log_context(session_id: Optional[str] = None, student_id: Optional[str] = None) -> None:
+def set_log_context(session_id: str | None = None, student_id: str | None = None) -> None:
     if session_id is not None:
         _session_var.set(session_id)
     if student_id is not None:
@@ -49,21 +49,22 @@ def clear_log_context() -> None:
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        if (sid := _session_var.get()):
+        if sid := _session_var.get():
             payload["session_id"] = sid
-        if (uid := _student_var.get()):
+        if uid := _student_var.get():
             payload["student_id"] = uid
 
         # Include any user-attached extras.
-        std_keys = set(logging.LogRecord(
-            "n", 0, "p", 0, "m", None, None, None
-        ).__dict__.keys()) | {"message", "asctime"}
+        std_keys = set(logging.LogRecord("n", 0, "p", 0, "m", None, None, None).__dict__.keys()) | {
+            "message",
+            "asctime",
+        }
         for k, v in record.__dict__.items():
             if k not in std_keys and not k.startswith("_"):
                 try:
@@ -78,7 +79,7 @@ class _JsonFormatter(logging.Formatter):
 
 
 class _PrettyFormatter(logging.Formatter):
-    COLORS = {
+    COLORS: ClassVar[dict[str, str]] = {
         "DEBUG": "\033[36m",
         "INFO": "\033[32m",
         "WARNING": "\033[33m",
@@ -90,9 +91,9 @@ class _PrettyFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         color = self.COLORS.get(record.levelname, "")
         ctx = ""
-        if (sid := _session_var.get()):
+        if sid := _session_var.get():
             ctx += f" [s={sid[:8]}]"
-        if (uid := _student_var.get()):
+        if uid := _student_var.get():
             ctx += f" [u={uid[:8]}]"
         ts = time.strftime("%H:%M:%S", time.localtime(record.created))
         return (
@@ -101,7 +102,7 @@ class _PrettyFormatter(logging.Formatter):
         )
 
 
-def configure_logging(level: Optional[str] = None) -> None:
+def configure_logging(level: str | None = None) -> None:
     """Idempotent — safe to call from main, tests, or Celery workers."""
     root = logging.getLogger()
     root.handlers.clear()

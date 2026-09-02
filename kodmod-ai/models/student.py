@@ -1,19 +1,20 @@
 """Pydantic schemas for /student endpoints."""
+
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
 class StudentBase(BaseModel):
     full_name: str
-    email: Optional[str] = None
-    grade_level: Optional[str] = None
+    email: str | None = None
+    grade_level: str | None = None
     accessibility_profile: str = "blind"
-    preferred_language: str = "id"
+    preferred_language: Literal["id", "en"] = "id"
 
 
 class StudentCreate(StudentBase):
@@ -37,4 +38,4 @@ class StudentProfileOut(StudentOut):
     weak_concepts: list[str] = Field(default_factory=list)
     strong_concepts: list[str] = Field(default_factory=list)
     streak_days: int = 0
-    last_active_at: Optional[datetime] = None
+    last_active_at: datetime | None = None

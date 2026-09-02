@@ -12,15 +12,14 @@ query-time embedding. BGE-M3 was chosen because:
 
 The actual model is loaded lazily; callers `await embed_text([...])`.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from functools import lru_cache
-from typing import Sequence
-
-import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -33,11 +32,16 @@ def _model():
     backend = os.getenv("KODMOD_EMBED_BACKEND", "bge-m3")
     if backend == "openai":
         from langchain_openai import OpenAIEmbeddings
-        return ("openai", OpenAIEmbeddings(model="text-embedding-3-large"))
+
+        model = os.getenv("KODMOD_EMBED_MODEL", "text-embedding-3-small")
+        # Truncate to EMBED_DIM so vectors match the pgvector column (vector(1024))
+        # and stay under pgvector's 2000-dim ANN index limit.
+        return ("openai", OpenAIEmbeddings(model=model, dimensions=EMBED_DIM))
 
     # Default: FlagEmbedding's BGE-M3
     try:
         from FlagEmbedding import BGEM3FlagModel
+
         m = BGEM3FlagModel(
             "BAAI/bge-m3",
             use_fp16=True,
@@ -47,6 +51,7 @@ def _model():
     except ImportError:
         log.warning("FlagEmbedding not installed; falling back to sentence-transformers")
         from sentence_transformers import SentenceTransformer
+
         m = SentenceTransformer("BAAI/bge-m3")
         return ("st", m)
 

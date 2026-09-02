@@ -22,19 +22,24 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 # Keep these patterns conservative — false positives interrupt teaching.
 _COMMANDS = {
-    "repeat":     re.compile(r"^\s*(ulangi(?:\s+lagi)?|repeat(?:\s+that)?|sekali\s+lagi|say\s+again)\s*[?.!]?\s*$", re.I),
-    "stop":       re.compile(r"^\s*(berhenti|stop|cukup|udahan|hentikan)\s*[?.!]?\s*$", re.I),
-    "slower":     re.compile(r"^\s*(lebih\s+)?(pelan|lambat|slower|slow\s+down)(\s+lagi)?\s*[?.!]?\s*$", re.I),
-    "faster":     re.compile(r"^\s*(lebih\s+)?(cepat|kencang|faster|speed\s+up)(\s+lagi)?\s*[?.!]?\s*$", re.I),
-    "next":       re.compile(r"^\s*(lanjut(?:kan)?|berikutnya|next|continue)\s*[?.!]?\s*$", re.I),
-    "back":       re.compile(r"^\s*(kembali|sebelumnya|back|previous)\s*[?.!]?\s*$", re.I),
-    "help":       re.compile(r"^\s*(bantuan|tolong|help|menu)\s*[?.!]?\s*$", re.I),
-    "louder":     re.compile(r"^\s*(lebih\s+)?(keras|nyaring|louder)\s*[?.!]?\s*$", re.I),
-    "quieter":    re.compile(r"^\s*(lebih\s+)?(pelan\s+suara|quieter|softer)\s*[?.!]?\s*$", re.I),
+    "repeat": re.compile(
+        r"^\s*(ulangi(?:\s+lagi)?|repeat(?:\s+that)?|sekali\s+lagi|say\s+again)\s*[?.!]?\s*$", re.I
+    ),
+    "stop": re.compile(r"^\s*(berhenti|stop|cukup|udahan|hentikan)\s*[?.!]?\s*$", re.I),
+    "slower": re.compile(
+        r"^\s*(lebih\s+)?(pelan|lambat|slower|slow\s+down)(\s+lagi)?\s*[?.!]?\s*$", re.I
+    ),
+    "faster": re.compile(
+        r"^\s*(lebih\s+)?(cepat|kencang|faster|speed\s+up)(\s+lagi)?\s*[?.!]?\s*$", re.I
+    ),
+    "next": re.compile(r"^\s*(lanjut(?:kan)?|berikutnya|next|continue)\s*[?.!]?\s*$", re.I),
+    "back": re.compile(r"^\s*(kembali|sebelumnya|back|previous)\s*[?.!]?\s*$", re.I),
+    "help": re.compile(r"^\s*(bantuan|tolong|help|menu)\s*[?.!]?\s*$", re.I),
+    "louder": re.compile(r"^\s*(lebih\s+)?(keras|nyaring|louder)\s*[?.!]?\s*$", re.I),
+    "quieter": re.compile(r"^\s*(lebih\s+)?(pelan\s+suara|quieter|softer)\s*[?.!]?\s*$", re.I),
     "start_quiz": re.compile(r"^\s*(mulai\s+kuis|start\s+quiz|kuis\s+sekarang)\s*[?.!]?\s*$", re.I),
 }
 
@@ -49,7 +54,7 @@ class VoiceCommand:
         return self.name in {"stop", "help", "repeat"}
 
 
-def detect_command(text: str) -> Optional[VoiceCommand]:
+def detect_command(text: str) -> VoiceCommand | None:
     """Return a VoiceCommand if `text` matches a fixed command, else None."""
     if not text:
         return None

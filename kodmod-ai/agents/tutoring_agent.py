@@ -21,6 +21,7 @@ Behaviours implemented
 5. **Streaming** — uses `astream` so the WebSocket can begin TTS synthesis
    on the first sentence rather than waiting for the full response.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,9 +31,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from graphs.state import KODMODState
 from tools.llm_client import get_tutor_llm
-from tools.rag_tool import RAGTool
-from tools.student_profile_tool import StudentProfileTool
-from prompts.loader import load_prompt
 
 log = logging.getLogger(__name__)
 
@@ -111,19 +109,17 @@ async def tutoring_node(state: KODMODState) -> dict[str, Any]:
     )
 
     llm = get_tutor_llm()
-    response = await llm.ainvoke(
-        [SystemMessage(content=sys_with_meta), *history_msgs, user_msg]
-    )
+    response = await llm.ainvoke([SystemMessage(content=sys_with_meta), *history_msgs, user_msg])
     answer = response.content if hasattr(response, "content") else str(response)
 
     # ---- Update tutoring_context for next turn ---------------------------
-    new_history = list(history) + [
+    new_history = [
+        *history,
         {"role": "student", "text": user_input, "concept_id": concept_id},
         {"role": "tutor", "text": answer, "concept_id": concept_id},
     ]
 
-    log.info("Tutor produced %d chars (mastery=%.2f, emotion=%s)",
-             len(answer), mastery, emotion)
+    log.info("Tutor produced %d chars (mastery=%.2f, emotion=%s)", len(answer), mastery, emotion)
 
     return {
         "generated_response": answer,
@@ -138,6 +134,7 @@ async def tutoring_node(state: KODMODState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _format_retrieved(docs: list[dict]) -> str:
     """Render retrieved chunks as a numbered list the LLM can ground on."""

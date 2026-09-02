@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Literal, Optional
+from typing import Literal
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +74,7 @@ def get_classroom_analytics_tool() -> StructuredTool:
         coroutine=fetch_classroom_analytics,
         name="get_classroom_analytics",
         description=(
-            "Compute aggregate analytics for an entire classroom (used by the teacher "
-            "dashboard)."
+            "Compute aggregate analytics for an entire classroom (used by the teacher dashboard)."
         ),
         args_schema=ClassroomAnalyticsInput,
     )

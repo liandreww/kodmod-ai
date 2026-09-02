@@ -17,6 +17,7 @@ Recommendations always come in three flavors:
 The agent is intentionally conservative: it suggests at most 3 actions per
 turn so the audio output stays digestible.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,6 @@ from typing import Any
 
 from graphs.state import KODMODState
 from tools.llm_client import get_recommendation_llm
-from tools.rag_tool import RAGTool
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
     user_block = (
         f"Language: {language}\n"
         f"Analytics: {json.dumps(summary, ensure_ascii=False)}\n"
-        f"Recent emotional state: {state.get('emotional_state','neutral')}\n"
+        f"Recent emotional state: {state.get('emotional_state', 'neutral')}\n"
         f"Misconceptions: {state.get('misconceptions_detected', [])}\n"
     )
 
@@ -75,7 +75,9 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
     raw = response.content if hasattr(response, "content") else str(response)
 
     try:
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
         log.warning("Recommendation JSON parse failed; using fallback")
@@ -84,9 +86,7 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
     recs = parsed.get("recommendations", [])
     intro = parsed.get("spoken_intro", "Inilah rekomendasi untukmu.")
 
-    spoken = intro + " " + " ".join(
-        f"{i+1}. {r['text']}" for i, r in enumerate(recs)
-    )
+    spoken = intro + " " + " ".join(f"{i + 1}. {r['text']}" for i, r in enumerate(recs))
 
     log.info("Generated %d recommendations", len(recs))
 
@@ -96,9 +96,7 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
             **summary,
             "structured_recommendations": recs,
         },
-        "generated_response": (
-            (state.get("generated_response", "") + " " + spoken).strip()
-        ),
+        "generated_response": ((state.get("generated_response", "") + " " + spoken).strip()),
         "next_action": "accessibility_polish",
         "last_node": "recommendation",
     }
@@ -107,6 +105,7 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Fallback
 # ---------------------------------------------------------------------------
+
 
 def _fallback(summary: dict) -> dict:
     weak = summary.get("weak_concepts", [])

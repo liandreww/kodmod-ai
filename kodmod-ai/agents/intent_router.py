@@ -19,6 +19,7 @@ Design choices
   answer), we short-circuit and force `intent="quiz"` so the student's reply
   is treated as a quiz answer, not a new tutoring question.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,6 @@ from typing import cast
 from pydantic import BaseModel, Field, ValidationError
 
 from graphs.state import Intent, KODMODState
-from prompts.loader import load_prompt
 from tools.llm_client import get_router_llm
 
 log = logging.getLogger(__name__)
@@ -104,7 +104,9 @@ async def intent_router_node(state: KODMODState) -> dict:
 
     try:
         # Strip code fences if any
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         decision = IntentDecision.model_validate_json(cleaned)
     except (ValidationError, json.JSONDecodeError) as exc:
         log.warning("Intent JSON parse failed: %s — falling back to tutoring", exc)
@@ -114,7 +116,10 @@ async def intent_router_node(state: KODMODState) -> dict:
 
     log.info(
         "Intent=%s conf=%.2f emotion=%s reason=%s",
-        decision.intent, decision.confidence, decision.detected_emotion, decision.reasoning,
+        decision.intent,
+        decision.confidence,
+        decision.detected_emotion,
+        decision.reasoning,
     )
 
     return {
@@ -132,9 +137,18 @@ async def intent_router_node(state: KODMODState) -> dict:
 # ---------------------------------------------------------------------------
 
 _META_COMMANDS = {
-    "stop", "berhenti", "pause", "repeat", "ulangi", "ulang",
-    "help", "tolong", "lebih lambat", "slow down",
+    "stop",
+    "berhenti",
+    "pause",
+    "repeat",
+    "ulangi",
+    "ulang",
+    "help",
+    "tolong",
+    "lebih lambat",
+    "slow down",
 }
+
 
 def _is_meta_command(text: str) -> bool:
     """Detect quiz-control commands that should NOT be treated as answers."""

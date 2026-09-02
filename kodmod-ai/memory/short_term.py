@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import redis.asyncio as aioredis
 
@@ -25,7 +25,7 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL = 60 * 60 * 24  # 24h
-_pool: Optional[aioredis.Redis] = None
+_pool: aioredis.Redis | None = None
 
 
 async def get_redis() -> aioredis.Redis:
@@ -56,7 +56,7 @@ async def set_value(session_id: str, sub: str, value: Any, ttl: int = _DEFAULT_T
     await r.set(_key(session_id, sub), json.dumps(value, default=str), ex=ttl)
 
 
-async def get_value(session_id: str, sub: str) -> Optional[Any]:
+async def get_value(session_id: str, sub: str) -> Any | None:
     r = await get_redis()
     v = await r.get(_key(session_id, sub))
     return json.loads(v) if v else None
@@ -75,12 +75,12 @@ async def delete_session(session_id: str) -> None:
 
 
 # --- semantic helpers used by agents -------------------------------------
-async def store_last_response(session_id: str, text: str, audio_url: Optional[str] = None) -> None:
+async def store_last_response(session_id: str, text: str, audio_url: str | None = None) -> None:
     """Used by accessibility_agent so 'ulangi' can replay it."""
     await set_value(session_id, "last_response", {"text": text, "audio_url": audio_url})
 
 
-async def fetch_last_response(session_id: str) -> Optional[dict]:
+async def fetch_last_response(session_id: str) -> dict | None:
     return await get_value(session_id, "last_response")
 
 

@@ -16,16 +16,17 @@ weighting is faster and easier to interpret. We expose:
 * `weak_concepts(n)` / `strong_concepts(n)` — for analytics + recommendations
 * `velocity(concept_id, days)` — change in mastery over a window
 """
+
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import text
+
 from database.session import async_session
-from sqlalchemy import select, text
 
 log = logging.getLogger(__name__)
 
@@ -48,20 +49,24 @@ class StudentModel:
     # Loading & saving
     # ------------------------------------------------------------------
     @classmethod
-    async def load(cls, student_id: str) -> "StudentModel":
+    async def load(cls, student_id: str) -> StudentModel:
         m = cls(student_id=student_id)
         async with async_session() as s:
             rows = await s.execute(
-                text("SELECT concept_id, score, confidence, n_attempts, last_practiced "
-                     "FROM mastery_scores WHERE student_id = :sid"),
-                {"sid": student_id},
+                text(
+                    "SELECT concept_id, mastery AS score, confidence, n_attempts, "
+                    "last_seen AS last_practiced "
+                    "FROM mastery_scores WHERE student_id = CAST(:sid AS uuid)"
+                ),
+                {"sid": str(student_id)},
             )
             for r in rows:
-                m._scores[r.concept_id] = float(r.score)
-                m._confidence[r.concept_id] = float(r.confidence)
-                m._attempts[r.concept_id] = int(r.n_attempts)
+                cid = str(r.concept_id)
+                m._scores[cid] = float(r.score)
+                m._confidence[cid] = float(r.confidence)
+                m._attempts[cid] = int(r.n_attempts)
                 if r.last_practiced:
-                    m._last_practiced[r.concept_id] = r.last_practiced
+                    m._last_practiced[cid] = r.last_practiced
         return m
 
     async def persist(self) -> None:
@@ -71,22 +76,24 @@ class StudentModel:
                     text(
                         """
                         INSERT INTO mastery_scores
-                            (student_id, concept_id, score, confidence,
-                             n_attempts, last_practiced)
-                        VALUES (:sid, :cid, :sc, :cf, :n, :lp)
+                            (id, student_id, concept_id, mastery, confidence,
+                             n_attempts, last_seen)
+                        VALUES (gen_random_uuid(), CAST(:sid AS uuid),
+                                CAST(:cid AS uuid), :sc, :cf, :n, :lp)
                         ON CONFLICT (student_id, concept_id) DO UPDATE
-                          SET score = EXCLUDED.score,
+                          SET mastery = EXCLUDED.mastery,
                               confidence = EXCLUDED.confidence,
                               n_attempts = EXCLUDED.n_attempts,
-                              last_practiced = EXCLUDED.last_practiced
+                              last_seen = EXCLUDED.last_seen
                         """
                     ),
                     {
-                        "sid": self.student_id, "cid": cid,
+                        "sid": str(self.student_id),
+                        "cid": str(cid),
                         "sc": score,
                         "cf": self._confidence.get(cid, 0.5),
                         "n": self._attempts.get(cid, 0),
-                        "lp": self._last_practiced.get(cid, datetime.now(timezone.utc)),
+                        "lp": self._last_practiced.get(cid, datetime.now(UTC)),
                     },
                 )
             await s.commit()
@@ -105,16 +112,20 @@ class StudentModel:
         self._scores[concept_id] = new_score
         self._confidence[concept_id] = new_conf
         self._attempts[concept_id] = self._attempts.get(concept_id, 0) + 1
-        self._last_practiced[concept_id] = datetime.now(timezone.utc)
+        self._last_practiced[concept_id] = datetime.now(UTC)
 
         log.info(
             "Mastery update: student=%s concept=%s %.3f → %.3f (conf=%.2f)",
-            self.student_id, concept_id, prev, new_score, new_conf,
+            self.student_id,
+            concept_id,
+            prev,
+            new_score,
+            new_conf,
         )
 
     def apply_decay(self) -> None:
         """Mild forgetting curve — call before reading scores for analytics."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for cid, last in self._last_practiced.items():
             days = max(0, (now - last).days)
             if days == 0:
@@ -143,6 +154,7 @@ class StudentModel:
 # LangGraph node
 # ---------------------------------------------------------------------------
 
+
 async def update_student_model_node(state) -> dict[str, Any]:
     """Apply quiz_attempts to the persistent student model."""
     student_id = state.get("student_id")
@@ -158,8 +170,7 @@ async def update_student_model_node(state) -> dict[str, Any]:
         cid = q.get("concept_id")
         if not cid:
             continue
-        model.update(cid, float(a.get("score", 0.0)),
-                     confidence=float(a.get("confidence", 0.9)))
+        model.update(cid, float(a.get("score", 0.0)), confidence=float(a.get("confidence", 0.9)))
 
     await model.persist()
 

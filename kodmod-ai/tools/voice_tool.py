@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -43,13 +42,11 @@ def get_transcribe_tool() -> StructuredTool:
 
 class SynthesizeInput(BaseModel):
     text: str
-    voice: Optional[str] = None
+    voice: str | None = None
     rate: float = 1.0
 
 
-async def synthesize_speech(
-    text: str, *, voice: Optional[str] = None, rate: float = 1.0
-) -> dict:
+async def synthesize_speech(text: str, *, voice: str | None = None, rate: float = 1.0) -> dict:
     out_path = await synthesise_to_file(text, voice=voice, rate=rate)
     return {"audio_path": str(out_path)}
 

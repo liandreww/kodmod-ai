@@ -17,7 +17,6 @@ weekly digests where users will tolerate a couple-second delay.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -28,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------- helpers --
 def _pct(x: float) -> str:
-    return f"{int(round(x * 100))} persen"
+    return f"{round(x * 100)} persen"
 
 
 def _format_concept_list(items: list[dict], key: str = "concept_name", n: int = 3) -> str:
@@ -78,9 +77,7 @@ def generate_student_spoken_summary(analytics: dict) -> str:
     if strong:
         parts.append(f"Kamu sudah kuat di {_format_concept_list(strong)}.")
     if weak:
-        parts.append(
-            f"Yang masih perlu kita perdalam: {_format_concept_list(weak)}."
-        )
+        parts.append(f"Yang masih perlu kita perdalam: {_format_concept_list(weak)}.")
 
     return " ".join(parts)
 
@@ -100,39 +97,47 @@ def generate_teacher_summary(analytics: dict) -> dict:
     miscons = analytics.get("open_misconceptions", [])
 
     if n_attempts >= 3 and accuracy < 0.5:
-        alerts.append({
-            "level": "warning",
-            "title": f"{student_name}: akurasi rendah",
-            "detail": (
-                f"Akurasi {int(accuracy*100)}% dari {n_attempts} kuis. "
-                "Disarankan sesi 1:1 atau remediasi terarah."
-            ),
-        })
+        alerts.append(
+            {
+                "level": "warning",
+                "title": f"{student_name}: akurasi rendah",
+                "detail": (
+                    f"Akurasi {int(accuracy * 100)}% dari {n_attempts} kuis. "
+                    "Disarankan sesi 1:1 atau remediasi terarah."
+                ),
+            }
+        )
 
     if engagement < 0.2 and analytics.get("n_sessions", 0) <= 1:
-        alerts.append({
-            "level": "warning",
-            "title": f"{student_name}: keterlibatan rendah",
-            "detail": "Kurang dari satu sesi per minggu. Periksa motivasi siswa.",
-        })
+        alerts.append(
+            {
+                "level": "warning",
+                "title": f"{student_name}: keterlibatan rendah",
+                "detail": "Kurang dari satu sesi per minggu. Periksa motivasi siswa.",
+            }
+        )
 
     if miscons:
-        alerts.append({
-            "level": "info",
-            "title": f"{student_name}: {len(miscons)} miskonsepsi terdeteksi",
-            "detail": "; ".join(m["description"] for m in miscons[:3]),
-        })
+        alerts.append(
+            {
+                "level": "info",
+                "title": f"{student_name}: {len(miscons)} miskonsepsi terdeteksi",
+                "detail": "; ".join(m["description"] for m in miscons[:3]),
+            }
+        )
 
     if not alerts and analytics.get("overall_mastery", 0) >= 0.85:
-        alerts.append({
-            "level": "success",
-            "title": f"{student_name}: penguasaan kuat",
-            "detail": "Pertimbangkan materi tantangan tingkat lanjut.",
-        })
+        alerts.append(
+            {
+                "level": "success",
+                "title": f"{student_name}: penguasaan kuat",
+                "detail": "Pertimbangkan materi tantangan tingkat lanjut.",
+            }
+        )
 
     headline = (
-        f"{student_name} — penguasaan {int(analytics.get('overall_mastery', 0)*100)}%, "
-        f"akurasi kuis {int(accuracy*100)}%, "
+        f"{student_name} — penguasaan {int(analytics.get('overall_mastery', 0) * 100)}%, "
+        f"akurasi kuis {int(accuracy * 100)}%, "
         f"{analytics.get('n_sessions', 0)} sesi minggu ini."
     )
     return {"headline": headline, "alerts": alerts}
@@ -145,21 +150,25 @@ def generate_classroom_alerts(classroom_summary: dict) -> list[dict]:
     alerts: list[dict] = []
     weak = classroom_summary.get("class_weak_concepts", [])
     if weak and weak[0]["avg_mastery"] < 0.5:
-        alerts.append({
-            "level": "warning",
-            "title": f"Konsep kelas lemah: {weak[0]['concept_name']}",
-            "detail": (
-                f"Rata-rata penguasaan kelas hanya "
-                f"{int(weak[0]['avg_mastery']*100)}% pada {weak[0]['n_students']} siswa. "
-                "Pertimbangkan re-teach materi ini."
-            ),
-        })
+        alerts.append(
+            {
+                "level": "warning",
+                "title": f"Konsep kelas lemah: {weak[0]['concept_name']}",
+                "detail": (
+                    f"Rata-rata penguasaan kelas hanya "
+                    f"{int(weak[0]['avg_mastery'] * 100)}% pada {weak[0]['n_students']} siswa. "
+                    "Pertimbangkan re-teach materi ini."
+                ),
+            }
+        )
     if classroom_summary.get("avg_engagement_index", 0) < 0.3:
-        alerts.append({
-            "level": "info",
-            "title": "Keterlibatan kelas rendah",
-            "detail": "Rata-rata sesi per siswa di bawah ambang sehat.",
-        })
+        alerts.append(
+            {
+                "level": "info",
+                "title": "Keterlibatan kelas rendah",
+                "detail": "Rata-rata sesi per siswa di bawah ambang sehat.",
+            }
+        )
     return alerts
 
 
@@ -187,14 +196,13 @@ async def generate_insights(
 
     # Optional LLM polish for weekly digests.
     try:
-        llm = get_recommendation_llm(temperature=0.3)
+        llm = get_recommendation_llm()
         sys = (
             "Anda adalah pendidik yang ramah. Polish ringkasan berikut agar "
             "lebih hangat dan memotivasi. Jangan tambahkan informasi baru. "
             "Maksimum 3 kalimat. JANGAN gunakan markdown."
             if language == "id"
-            else
-            "You are a warm educator. Polish the following summary to be more "
+            else "You are a warm educator. Polish the following summary to be more "
             "encouraging. Add no new information. Maximum 3 sentences. No markdown."
         )
         resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=spoken)])

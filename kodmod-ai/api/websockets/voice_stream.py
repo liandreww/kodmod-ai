@@ -21,9 +21,9 @@ Rate limiting
 Per-student rate limit enforced via Redis token bucket — see
 `api/middleware/rate_limit.py`.
 """
+
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from uuid import uuid4
@@ -50,7 +50,7 @@ async def voice_ws(websocket: WebSocket):
     log.info("WS opened for student=%s", student.id)
 
     session_id = str(uuid4())
-    stt = StreamingSTT(language=student.language or "id")
+    stt = StreamingSTT(language=student.preferred_language or "id")
 
     try:
         while True:
@@ -78,14 +78,18 @@ async def voice_ws(websocket: WebSocket):
                 kind = event["event"]
 
                 if kind == "on_chat_model_stream":
-                    delta = event["data"]["chunk"].content if hasattr(
-                        event["data"]["chunk"], "content"
-                    ) else ""
+                    delta = (
+                        event["data"]["chunk"].content
+                        if hasattr(event["data"]["chunk"], "content")
+                        else ""
+                    )
                     assembled_text.append(delta)
-                    await websocket.send_json({
-                        "type": "token",
-                        "text": delta,
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "token",
+                            "text": delta,
+                        }
+                    )
 
                 elif kind == "on_chain_end" and event["name"] == "accessibility":
                     # Start streaming TTS as soon as accessibility node completes
@@ -109,6 +113,7 @@ async def voice_ws(websocket: WebSocket):
 # Audio collection
 # ---------------------------------------------------------------------------
 
+
 async def _collect_utterance(ws: WebSocket, stt: StreamingSTT) -> str | None:
     """
     Receive audio frames until VAD says the user stopped talking, then return
@@ -119,14 +124,14 @@ async def _collect_utterance(ws: WebSocket, stt: StreamingSTT) -> str | None:
         msg = await ws.receive()
         if msg.get("type") == "websocket.disconnect":
             return None
-        if "bytes" in msg and msg["bytes"]:
+        if msg.get("bytes"):
             partial, is_final = await stt.feed(msg["bytes"])
             if partial:
                 transcript = partial
                 await ws.send_json({"type": "partial_transcript", "text": partial})
             if is_final:
                 return transcript
-        elif "text" in msg and msg["text"]:
+        elif msg.get("text"):
             data = json.loads(msg["text"])
             if data.get("event") == "end_of_speech":
                 return transcript or ""

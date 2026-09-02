@@ -23,9 +23,9 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, Optional
+from typing import Literal
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 
 from database.models import (
     Classroom,
@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 WindowName = Literal["today", "week", "month", "all"]
 
 
-def _window_start(window: WindowName) -> Optional[datetime]:
+def _window_start(window: WindowName) -> datetime | None:
     now = datetime.utcnow()
     if window == "today":
         return datetime(now.year, now.month, now.day)
@@ -119,7 +119,7 @@ class StudentAggregator:
                     .join(LearningSession, InteractionLog.session_id == LearningSession.id)
                     .where(
                         LearningSession.student_id == student_id,
-                        *( [InteractionLog.timestamp >= start] if start else [] ),
+                        *([InteractionLog.timestamp >= start] if start else []),
                     )
                 )
             ).scalar_one()
@@ -128,7 +128,8 @@ class StudentAggregator:
         n_sessions = len(sessions)
         total_minutes = sum(
             ((s.ended_at or s.started_at) - s.started_at).total_seconds() / 60.0
-            for s in sessions if s.started_at
+            for s in sessions
+            if s.started_at
         )
 
         n_attempts = len(attempts)
@@ -147,9 +148,7 @@ class StudentAggregator:
         ]
         weak = sorted(mastery, key=lambda x: x["mastery"])[:5]
         strong = sorted(mastery, key=lambda x: x["mastery"], reverse=True)[:5]
-        overall_mastery = (
-            sum(m["mastery"] for m in mastery) / len(mastery) if mastery else 0.0
-        )
+        overall_mastery = sum(m["mastery"] for m in mastery) / len(mastery) if mastery else 0.0
 
         # Engagement index (heuristic): sessions/day * avg-session-minutes / 30
         days_in_window = max(1, (datetime.utcnow() - start).days) if start else 30
@@ -182,59 +181,39 @@ class StudentAggregator:
         }
 
         if include_recommendations:
-            out["active_recommendations"] = await fetch_active_recommendations(
-                student_id, limit=5
-            )
+            out["active_recommendations"] = await fetch_active_recommendations(student_id, limit=5)
         return out
 
 
 @dataclass
 class ClassroomAggregator:
-    async def summarise(
-        self, *, classroom_id: uuid.UUID, window: WindowName = "week"
-    ) -> dict:
-        start = _window_start(window)
-
+    async def summarise(self, *, classroom_id: uuid.UUID, window: WindowName = "week") -> dict:
         async with async_session() as session:
             classroom = await session.get(Classroom, classroom_id)
             if classroom is None:
                 return {"error": "classroom_not_found"}
 
-            # All students enrolled (via classroom_enrollment)
-            roster = (
-                await session.execute(
-                    select(Student)
-                    .join(
-                        # classroom_enrollment is in schema.sql but not in ORM —
-                        # use raw join through the table name.
-                        Student.__table__.join(
-                            __import__("sqlalchemy").Table(
-                                "classroom_enrollment",
-                                Student.__table__.metadata,
-                                autoload_with=session.bind.sync_engine,
-                            )
-                        )
-                    )
-                    .where(__import__("sqlalchemy").literal_column("classroom_id") == classroom_id)
-                )
-            ).scalars().all() if False else []  # See note below
-
-        # NOTE: rather than autoloading reflection at request time, we run
-        # a raw SQL pass for roster and per-student rollups. Keeps deps
-        # simple and avoids reflection latency in the hot path.
+        # NOTE (bug #20): classroom_enrollment lives in schema.sql but not in the
+        # ORM, so rather than autoloading reflection at request time we run a raw
+        # SQL pass for the roster and per-student rollups. Keeps deps simple and
+        # avoids reflection latency in the hot path.
         from sqlalchemy import text
 
         async with async_session() as session:
             roster_rows = (
-                await session.execute(
-                    text(
-                        "SELECT s.id, s.full_name FROM students s "
-                        "JOIN classroom_enrollment ce ON ce.student_id = s.id "
-                        "WHERE ce.classroom_id = :cid"
-                    ),
-                    {"cid": str(classroom_id)},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT s.id, s.full_name FROM students s "
+                            "JOIN classroom_enrollment ce ON ce.student_id = s.id "
+                            "WHERE ce.classroom_id = :cid"
+                        ),
+                        {"cid": str(classroom_id)},
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
 
         per_student = []
         for r in roster_rows:

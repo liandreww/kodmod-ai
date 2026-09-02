@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from functools import lru_cache
-from typing import Optional, Sequence
 
 from config.settings import settings
 
@@ -39,7 +39,7 @@ async def rerank(
     query: str,
     docs: Sequence[dict],
     *,
-    top_k: Optional[int] = None,
+    top_k: int | None = None,
     text_key: str = "text",
 ) -> list[dict]:
     """
@@ -63,7 +63,7 @@ async def rerank(
 
     scores = await loop.run_in_executor(None, _score)
     enriched = []
-    for d, s in zip(docs, scores):
+    for d, s in zip(docs, scores, strict=False):
         d2 = dict(d)
         d2["rerank_score"] = float(s)
         enriched.append(d2)

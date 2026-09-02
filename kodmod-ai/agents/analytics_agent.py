@@ -22,14 +22,15 @@ Metrics computed
   voice interaction quality)
 - Trend deltas vs. last 7 / 30 days
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+import uuid
 from typing import Any
 
 from analytics.aggregator import StudentAggregator
-from analytics.insights import generate_insights
+from analytics.insights import generate_student_spoken_summary
 from graphs.state import AnalyticsSummary, KODMODState
 
 log = logging.getLogger(__name__)
@@ -42,34 +43,49 @@ async def analytics_node(state: KODMODState) -> dict[str, Any]:
         log.warning("Analytics called without student_id")
         return {"next_action": "recommend", "last_node": "analytics"}
 
-    aggregator = StudentAggregator(student_id=student_id)
-    raw = await aggregator.compute(window_days=30)
+    try:
+        sid = student_id if isinstance(student_id, uuid.UUID) else uuid.UUID(str(student_id))
+    except (ValueError, TypeError):
+        log.warning("Analytics: student_id %r is not a UUID", student_id)
+        return {"next_action": "recommend", "last_node": "analytics"}
 
-    insights = await generate_insights(raw)
+    raw = await StudentAggregator().summarise(student_id=sid, window="month")
+
+    if raw.get("error"):
+        log.warning("Analytics: %s for student %s", raw["error"], student_id)
+        return {
+            "analytics_summary": {**state.get("analytics_summary", {}), **raw},
+            "generated_response": "Maaf, data analitik untuk kamu belum tersedia.",
+            "next_action": "recommend",
+            "last_node": "analytics",
+        }
+
+    # summarise() returns weak/strong concepts as dicts; downstream nodes and
+    # the spoken summary want a plain list of concept names.
+    weak_names = [c.get("concept_name", "") for c in raw.get("weak_concepts", [])]
+    strong_names = [c.get("concept_name", "") for c in raw.get("strong_concepts", [])]
 
     summary: AnalyticsSummary = {
-        "overall_mastery": raw["overall_mastery"],
-        "weak_concepts": raw["weak_concepts"][:3],
-        "strong_concepts": raw["strong_concepts"][:3],
-        "streak_days": raw["streak_days"],
-        "sessions_total": raw["sessions_total"],
-        "avg_quiz_score": raw["avg_quiz_score"],
-        "engagement_index": raw["engagement_index"],
-        "recommendations": insights.get("recommendations", []),
+        "overall_mastery": raw.get("overall_mastery", 0.0),
+        "weak_concepts": [n for n in weak_names if n][:3],
+        "strong_concepts": [n for n in strong_names if n][:3],
+        "streak_days": raw.get("streak_days", 0),
+        "sessions_total": raw.get("n_sessions", 0),
+        "avg_quiz_score": raw.get("avg_quiz_score", 0.0),
+        "engagement_index": raw.get("engagement_index", 0.0),
+        "recommendations": [],
     }
 
-    # Audio-friendly summary the TTS will speak if the student requested
-    # analytics via the Intent Router
-    spoken = _spoken_summary(summary)
+    # Audio-friendly Bahasa Indonesia summary (handles the no-history case).
+    spoken = generate_student_spoken_summary(raw)
 
     log.info(
         "Analytics for %s: mastery=%.2f sessions=%d engagement=%.2f",
-        student_id, summary["overall_mastery"], summary["sessions_total"],
+        student_id,
+        summary["overall_mastery"],
+        summary["sessions_total"],
         summary["engagement_index"],
     )
-
-    # Persist to the analytics_reports table (fire-and-forget)
-    await aggregator.persist(summary)
 
     return {
         "analytics_summary": {**state.get("analytics_summary", {}), **summary},
@@ -83,6 +99,7 @@ async def analytics_node(state: KODMODState) -> dict[str, Any]:
 # Spoken summary builder
 # ---------------------------------------------------------------------------
 
+
 def _spoken_summary(s: AnalyticsSummary) -> str:
     """Render analytics as 3–4 sentences friendly to TTS playback."""
     mastery_pct = round(s.get("overall_mastery", 0.0) * 100)
@@ -94,10 +111,9 @@ def _spoken_summary(s: AnalyticsSummary) -> str:
     parts = [
         f"Sejauh ini penguasaan keseluruhanmu sekitar {mastery_pct} persen.",
         (
-            f"Kamu sudah belajar selama {streak} hari beruntun"
-            f" dengan total {sessions} sesi."
-            if streak > 1 else
-            f"Total kamu sudah menjalani {sessions} sesi belajar."
+            f"Kamu sudah belajar selama {streak} hari beruntun dengan total {sessions} sesi."
+            if streak > 1
+            else f"Total kamu sudah menjalani {sessions} sesi belajar."
         ),
     ]
     if strong:

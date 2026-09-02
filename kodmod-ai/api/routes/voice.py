@@ -7,6 +7,7 @@ Non-streaming counterpart to the WebSocket endpoint, useful for:
 * Curl / Postman testing
 * Asynchronous tutoring (record → upload → poll for response)
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,15 +53,16 @@ async def voice_chat(
 
     final_state = await graph.ainvoke(state, config=config)
 
-    log.info("Voice chat turn complete (session=%s, last_node=%s)",
-             sid, final_state.get("last_node"))
+    log.info(
+        "Voice chat turn complete (session=%s, last_node=%s)", sid, final_state.get("last_node")
+    )
 
     return {
         "session_id": sid,
         "transcript": final_state.get("transcribed_text"),
         "intent": final_state.get("intent"),
         "response_text": final_state.get("accessible_response")
-                       or final_state.get("generated_response"),
+        or final_state.get("generated_response"),
         "audio_uri": final_state.get("audio_response_path"),
         "next_action": final_state.get("next_action"),
     }

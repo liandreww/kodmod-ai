@@ -34,12 +34,14 @@ async def generate_exercises(
     payload: ExerciseGenerateRequest,
     student: Student = Depends(current_student),
 ) -> ExerciseGenerateResponse:
+    """Generate an on-demand adaptive practice batch for the student."""
     if student.id != payload.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Mismatched student_id")
 
     # Lazy import to avoid circular ref between agents and routes.
-    from agents.problem_generator import generate_questions_for_student
     from datetime import datetime
+
+    from agents.problem_generator import generate_questions_for_student
 
     questions = await generate_questions_for_student(
         student_id=payload.student_id,
@@ -58,9 +60,16 @@ async def exercises_by_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
 ) -> list[Exercise]:
+    """List the audio-friendly teacher-authored exercises for a concept."""
     rows = (
-        await session.execute(
-            select(Exercise).where(Exercise.concept_id == concept_id, Exercise.is_audio_friendly.is_(True))
+        (
+            await session.execute(
+                select(Exercise).where(
+                    Exercise.concept_id == concept_id, Exercise.is_audio_friendly.is_(True)
+                )
+            )
         )
-    ).scalars().all()
-    return rows
+        .scalars()
+        .all()
+    )
+    return list(rows)

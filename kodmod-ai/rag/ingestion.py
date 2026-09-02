@@ -22,8 +22,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Optional
 
 from rag.chunking import chunk_document, chunks_to_payloads
 from rag.embeddings import embed_text
@@ -45,27 +45,27 @@ def _load_text(path: Path) -> str:
 
 
 async def _embed_batch(texts: list[str]) -> list[list[float]]:
-    # embeddings.embed_text already supports batched calls in providers,
-    # but we sequentialise here for simplicity. For large ingestions,
-    # swap this for a true batch method on the embedder.
-    return [await embed_text(t) for t in texts]
+    # embed_text takes a *sequence* of strings and returns one vector per
+    # string. Passing a bare str here would embed it character-by-character.
+    if not texts:
+        return []
+    return await embed_text(texts)
 
 
 async def ingest_paths(
     paths: Iterable[Path],
     *,
-    concept_id: Optional[uuid.UUID] = None,
+    concept_id: uuid.UUID | None = None,
     language: str = "id",
     target_tokens: int = 350,
 ) -> int:
     """Ingest one or more files; returns number of chunks written."""
-    if settings_backend := __import__("config.settings", fromlist=["settings"]).settings:
-        if settings_backend.VECTOR_BACKEND == "qdrant":
-            from rag.stores import qdrant_store as store
-        else:
-            from rag.stores import pgvector_store as store
-    else:  # pragma: no cover
-        from rag.stores import pgvector_store as store
+    from config.settings import settings
+
+    if settings.VECTOR_BACKEND == "qdrant":
+        from rag.stores import qdrant_store as store
+    else:
+        from rag.stores import pgvector_store as store  # type: ignore[no-redef]
 
     total = 0
     for path in paths:
@@ -81,21 +81,23 @@ async def ingest_paths(
 
         embeddings = await _embed_batch([p["text"] for p in payloads])
         records = []
-        for p, emb in zip(payloads, embeddings):
-            records.append({
-                "id": str(uuid.uuid4()),
-                "text": p["text"],
-                "embedding": emb,
-                "source": p["source"],
-                "language": language,
-                "concept_id": concept_id,
-                "chunk_index": p["chunk_index"],
-                "section_title": p.get("section_title"),
-                "accessibility_metadata": {
-                    "referenced_figures": p.get("referenced_figures", []),
-                    **p.get("metadata", {}),
-                },
-            })
+        for p, emb in zip(payloads, embeddings, strict=False):
+            records.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "text": p["text"],
+                    "embedding": emb,
+                    "source": p["source"],
+                    "language": language,
+                    "concept_id": concept_id,
+                    "chunk_index": p["chunk_index"],
+                    "section_title": p.get("section_title"),
+                    "accessibility_metadata": {
+                        "referenced_figures": p.get("referenced_figures", []),
+                        **p.get("metadata", {}),
+                    },
+                }
+            )
         n = await store.upsert_chunks(records)
         total += n
         logger.info("Ingested %s -> %d chunks", path, n)

@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-ZÁ-ÚÀ-Ï])")
 class Chunk:
     text: str
     source: str
-    section_title: Optional[str] = None
+    section_title: str | None = None
     chunk_index: int = 0
     referenced_figures: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
@@ -49,9 +49,9 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _split_on_headings(text: str) -> list[tuple[Optional[str], str]]:
+def _split_on_headings(text: str) -> list[tuple[str | None, str]]:
     """Returns list of (section_title, body)."""
-    parts: list[tuple[Optional[str], str]] = []
+    parts: list[tuple[str | None, str]] = []
     matches = list(_HEADING_RE.finditer(text))
 
     if not matches:
@@ -104,7 +104,7 @@ def chunk_document(
             nonlocal buf, buf_tokens, chunk_idx
             if not buf and not extra_sentences:
                 return
-            full = " ".join(extra_sentences or [] + buf)
+            full = " ".join(extra_sentences or [*buf])
             chunks.append(
                 Chunk(
                     text=full,

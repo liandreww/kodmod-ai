@@ -1,4 +1,5 @@
 """Alembic environment configuration for KODMOD AI."""
+
 from __future__ import annotations
 
 import asyncio

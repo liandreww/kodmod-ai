@@ -17,6 +17,7 @@ Inputs from state
 The agent uses the Content cluster's RAG to ground each question in real
 curriculum material so we never hallucinate facts.
 """
+
 from __future__ import annotations
 
 import json
@@ -78,6 +79,9 @@ OUTPUT — JSON ONLY:
 
 async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
     concept_id = state.get("current_concept_id") or _infer_concept(state)
+    # Human-readable topic for the LLM. `concept_id` is often a UUID or "general",
+    # which tells the model nothing — prefer an explicit topic label.
+    topic = (state.get("current_topic") or "").strip() or concept_id
     difficulty: DifficultyLevel = state.get("current_difficulty", "medium")
     mastery = state.get("mastery_scores", {})
     n_questions = _decide_n_questions(state)
@@ -85,19 +89,22 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
     # ---- Pull curriculum context from the Content cluster (RAG) ---------
     rag = RAGTool()
     docs = await rag.retrieve(
-        query=f"{concept_id} learning material questions",
+        query=f"{topic} learning material questions",
         k=6,
         filters={"concept_id": concept_id} if concept_id else None,
     )
-    context_block = "\n".join(
-        f"[{i+1}] {d.get('text','')[:300]}" for i, d in enumerate(docs[:6])
-    ) or "(curriculum context unavailable — fall back to general knowledge)"
+    context_block = (
+        "\n".join(f"[{i + 1}] {d.get('text', '')[:300]}" for i, d in enumerate(docs[:6]))
+        or "(curriculum context unavailable — fall back to general knowledge)"
+    )
 
     user_block = (
+        f"<topic>{topic}</topic>\n"
         f"<difficulty>{difficulty}</difficulty>\n"
         f"<mastery>{json.dumps(mastery)}</mastery>\n"
         f"<concept_id>{concept_id}</concept_id>\n"
         f"<n_questions>{n_questions}</n_questions>\n"
+        f"All {n_questions} questions must be about the topic above.\n"
         f"<curriculum_context>\n{context_block}\n</curriculum_context>\n\n"
         f"Generate exactly {n_questions} questions."
     )
@@ -112,7 +119,9 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
     raw = response.content if hasattr(response, "content") else str(response)
 
     try:
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
         log.error("Problem generator JSON parse failed")
@@ -137,8 +146,7 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
         log.warning("No questions produced; emitting one fallback")
         questions = [_fallback_question(concept_id, difficulty)]
 
-    log.info("Problem generator produced %d questions on concept=%s",
-             len(questions), concept_id)
+    log.info("Problem generator produced %d questions on concept=%s", len(questions), concept_id)
 
     return {
         "quiz_session_id": f"quiz-{uuid4().hex[:10]}",
@@ -151,9 +159,34 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
     }
 
 
+async def generate_questions_for_student(
+    *,
+    student_id: Any,
+    concept_id: Any | None = None,
+    n: int = 5,
+    difficulty_hint: str | None = None,
+    topic_hint: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Adapter used by ``POST /exercise/generate`` and ``tools/quiz_generator_tool`` —
+    wraps :func:`problem_generator_node` and returns plain dicts
+    (``ExerciseGenerateResponse.exercises`` is ``list[dict]``).
+    """
+    state: KODMODState = {
+        "student_id": str(student_id),
+        "current_concept_id": str(concept_id) if concept_id else "",
+        "current_topic": topic_hint or "",
+        "current_difficulty": difficulty_hint or "medium",
+        "mastery_scores": {},
+    }
+    result = await problem_generator_node(state)
+    return [dict(q) for q in result.get("quiz_questions", [])][:n]
+
+
 # ---------------------------------------------------------------------------
 # Heuristics
 # ---------------------------------------------------------------------------
+
 
 def _decide_n_questions(state: KODMODState) -> int:
     """Use student profile + emotional state to pick quiz length."""

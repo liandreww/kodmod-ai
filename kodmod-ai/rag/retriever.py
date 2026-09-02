@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
 
 from config.settings import settings
 from rag.embeddings import embed_text
@@ -35,10 +34,10 @@ def _store():
 async def retrieve(
     query: str,
     *,
-    concept_id: Optional[uuid.UUID] = None,
-    language: Optional[str] = None,
-    top_k: Optional[int] = None,
-    rerank_top_k: Optional[int] = None,
+    concept_id: uuid.UUID | None = None,
+    language: str | None = None,
+    top_k: int | None = None,
+    rerank_top_k: int | None = None,
     use_reranker: bool = True,
 ) -> list[dict]:
     """
@@ -50,7 +49,7 @@ async def retrieve(
     top_k = top_k or settings.RAG_TOP_K
     rerank_top_k = rerank_top_k or settings.RAG_RERANK_TOP_K
 
-    embedding = await embed_text(query)
+    embedding = (await embed_text([query]))[0]
     candidates = await _store().query(
         embedding,
         top_k=top_k,
@@ -84,16 +83,17 @@ async def rag_retrieval_node(state) -> dict:
                 if role in {"human", "user"}:
                     query = getattr(m, "content", "") or ""
                     break
-            except Exception:
+            except Exception:  # noqa: S112  # skip malformed message entries, keep scanning history
                 continue
 
     if not query.strip():
-        return {"retrieved_docs": []}
+        return {"retrieved_docs": [], "next_action": "tutor", "last_node": "rag_retrieval"}
 
     concept_id = None
-    if cid := state.get("concept_id"):
+    if cid := state.get("current_concept_id"):
         try:
             import uuid as _uuid
+
             concept_id = _uuid.UUID(str(cid))
         except (ValueError, TypeError):
             concept_id = None
@@ -104,4 +104,4 @@ async def rag_retrieval_node(state) -> dict:
         language=state.get("learning_profile", {}).get("preferred_language"),
     )
     logger.info("RAG retrieved %d chunks for query=%r", len(docs), query[:64])
-    return {"retrieved_docs": docs}
+    return {"retrieved_docs": docs, "next_action": "tutor", "last_node": "rag_retrieval"}

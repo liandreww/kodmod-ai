@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Literal, Optional
+from typing import Literal
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -22,19 +22,19 @@ logger = logging.getLogger(__name__)
 
 class GenerateQuizInput(BaseModel):
     student_id: str
-    concept_id: Optional[str] = None
+    concept_id: str | None = None
     n_questions: int = Field(default=5, ge=1, le=15)
-    difficulty: Optional[Literal["easy", "medium", "hard"]] = None
-    topic_hint: Optional[str] = None
+    difficulty: Literal["easy", "medium", "hard"] | None = None
+    topic_hint: str | None = None
 
 
 async def generate_quiz(
     student_id: str,
     *,
-    concept_id: Optional[str] = None,
+    concept_id: str | None = None,
     n_questions: int = 5,
-    difficulty: Optional[str] = None,
-    topic_hint: Optional[str] = None,
+    difficulty: str | None = None,
+    topic_hint: str | None = None,
 ) -> dict:
     """
     Returns a dict with:

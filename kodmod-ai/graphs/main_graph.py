@@ -31,30 +31,31 @@ Streaming
   forward partial TTS audio as soon as the tutoring agent emits its first
   tokens.
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from langgraph.graph import END, START, StateGraph
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.graph import END, START, StateGraph
 
-from agents.intent_router import intent_router_node
-from agents.tutoring_agent import tutoring_node
-from agents.quiz_agent import quiz_node, mini_quiz_node
-from agents.scoring_agent import scoring_node
-from agents.quiz_analyzer import quiz_analyzer_node
-from agents.problem_generator import problem_generator_node
-from agents.analytics_agent import analytics_node
-from agents.recommendation_agent import recommendation_node
 from agents.accessibility_agent import accessibility_node
+from agents.analytics_agent import analytics_node
+from agents.intent_router import intent_router_node
+from agents.problem_generator import problem_generator_node
+from agents.quiz_agent import mini_quiz_node, quiz_node
+from agents.quiz_analyzer import quiz_analyzer_node
+from agents.recommendation_agent import recommendation_node
 from agents.reflection_agent import reflection_node
+from agents.scoring_agent import scoring_node
+from agents.tutoring_agent import tutoring_node
+from analytics.student_model import update_student_model_node
+from config.settings import settings
+from graphs.state import KODMODState
+from rag.retriever import rag_retrieval_node
 from voice.stt import stt_node
 from voice.tts import tts_node
-from rag.retriever import rag_retrieval_node
-from analytics.student_model import update_student_model_node
-
-from graphs.state import KODMODState, NextAction
 
 log = logging.getLogger(__name__)
 
@@ -63,12 +64,22 @@ log = logging.getLogger(__name__)
 # Conditional routers
 # ---------------------------------------------------------------------------
 
+
 def route_after_intent(state: KODMODState) -> str:
     """
     First branch point — mirrors the 'What do you want?' diamond in the
     Practices & Tutoring diagram.
     """
     intent = state.get("intent", "unknown")
+
+    # Quiz in progress: the utterance is an answer, not a new request — the
+    # intent_router already forced intent="quiz". Route straight to scoring
+    # instead of regenerating a fresh question set.
+    questions = state.get("quiz_questions") or []
+    idx = state.get("current_question_index", 0)
+    quiz_in_progress = bool(state.get("quiz_session_id")) and idx < len(questions)
+    if intent == "quiz" and quiz_in_progress:
+        return "scoring"
 
     if intent == "tutoring":
         return "rag_retrieval"
@@ -92,10 +103,25 @@ def route_after_scoring(state: KODMODState) -> str:
     No (needs help)       → tutoring (remediation) → re-quiz
     """
     score = state.get("quiz_score", 0.0)
-    threshold = 0.6  # configurable in settings
+    threshold = settings.QUIZ_PASS_THRESHOLD
     if score >= threshold:
         return "update_student_model"
     return "tutoring"  # remediation loop
+
+
+def route_after_tutoring(state: KODMODState) -> str:
+    """
+    After a tutoring explanation, optionally fire the lightweight "Mini quiz"
+    comprehension check (Practices & Tutoring diagram) before self-reflection.
+    Only for a plain tutoring turn on a known concept — never mid quiz session.
+    """
+    if (
+        state.get("intent") == "tutoring"
+        and state.get("current_concept_id")
+        and not state.get("quiz_session_id")
+    ):
+        return "mini_quiz"
+    return "reflection"
 
 
 def route_after_analyzer(state: KODMODState) -> str:
@@ -104,12 +130,13 @@ def route_after_analyzer(state: KODMODState) -> str:
     idx = state.get("current_question_index", 0)
     if idx + 1 < len(questions):
         return "quiz_ask"  # next question
-    return "analytics"     # quiz finished → push to analytics cluster
+    return "analytics"  # quiz finished → push to analytics cluster
 
 
 # ---------------------------------------------------------------------------
 # Graph builder
 # ---------------------------------------------------------------------------
+
 
 async def build_kodmod_graph(
     checkpointer: AsyncPostgresSaver | None = None,
@@ -158,6 +185,7 @@ async def build_kodmod_graph(
         {
             "rag_retrieval": "rag_retrieval",
             "problem_generator": "problem_generator",
+            "scoring": "scoring",
             "analytics": "analytics",
             "tutoring": "tutoring",
             "end_speak": "tts",
@@ -166,7 +194,14 @@ async def build_kodmod_graph(
 
     # Tutoring path
     graph.add_edge("rag_retrieval", "tutoring")
-    graph.add_edge("tutoring", "reflection")     # self-check
+    graph.add_conditional_edges(
+        "tutoring",
+        route_after_tutoring,  # optional mini-quiz check, then self-reflection
+        {
+            "mini_quiz": "mini_quiz",
+            "reflection": "reflection",
+        },
+    )
     graph.add_edge("reflection", "accessibility")
     graph.add_edge("accessibility", "tts")
 
@@ -175,17 +210,17 @@ async def build_kodmod_graph(
 
     # Quiz cluster path
     graph.add_edge("problem_generator", "quiz_ask")
-    graph.add_edge("quiz_ask", "tts")            # speak the question
+    graph.add_edge("quiz_ask", "tts")  # speak the question
     # NOTE: when student answers, a NEW graph invocation re-enters at "stt"
     # and the intent router recognizes "quiz_in_progress" → routes to scoring.
 
     graph.add_edge("scoring", "quiz_analyzer")
     graph.add_conditional_edges(
         "quiz_analyzer",
-        route_after_scoring,                     # Yes / No diamond
+        route_after_scoring,  # Yes / No diamond
         {
             "update_student_model": "update_student_model",
-            "tutoring": "tutoring",              # remediation loop
+            "tutoring": "tutoring",  # remediation loop
         },
     )
     graph.add_conditional_edges(
@@ -219,6 +254,7 @@ async def build_kodmod_graph(
 # ---------------------------------------------------------------------------
 # Convenience runner used by FastAPI
 # ---------------------------------------------------------------------------
+
 
 async def run_turn(
     graph,

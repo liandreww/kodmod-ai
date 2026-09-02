@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        # Don't JSON-decode complex fields from env/.env. The only list field
+        # (CORS_ALLOW_ORIGINS) accepts a plain comma-separated string via its
+        # `mode="before"` validator; without this, `CORS_ALLOW_ORIGINS=*` in a
+        # .env file raises a JSON parse error before the validator runs.
+        enable_decoding=False,
     )
 
     # ------------------------------------------------------------------ env
@@ -43,17 +48,17 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # ------------------------------------------------------------------ api
-    API_HOST: str = "0.0.0.0"
+    API_HOST: str = "0.0.0.0"  # noqa: S104  # bind-all is the container default; restrict via env in prod
     API_PORT: int = 8000
     API_PREFIX: str = "/api/v1"
-    CORS_ALLOW_ORIGINS: List[str] = Field(default_factory=lambda: ["*"])
-    JWT_SECRET: str = "change-me-in-production"
+    CORS_ALLOW_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
+    JWT_SECRET: str = "change-me-in-production"  # noqa: S105  # placeholder; real value from env/secret
     JWT_ALG: str = "HS256"
     JWT_EXPIRE_MIN: int = 60 * 24  # 24h
 
     # ------------------------------------------------------------- database
     DB_USER: str = "kodmod"
-    DB_PASSWORD: str = "kodmod"
+    DB_PASSWORD: str = "kodmod"  # noqa: S105  # local dev default; real value from env/secret
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
     DB_NAME: str = "kodmod"
@@ -79,7 +84,7 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    REDIS_PASSWORD: Optional[str] = None
+    REDIS_PASSWORD: str | None = None
 
     @property
     def REDIS_URL(self) -> str:  # noqa: N802
@@ -88,8 +93,8 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------------------- llm
     KODMOD_LLM_PROVIDER: Literal["anthropic", "openai", "ollama", "vllm"] = "anthropic"
-    ANTHROPIC_API_KEY: Optional[str] = None
-    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: str | None = None
+    OPENAI_API_KEY: str | None = None
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     VLLM_BASE_URL: str = "http://localhost:8001/v1"
 
@@ -107,7 +112,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 1024
     VECTOR_BACKEND: Literal["pgvector", "qdrant"] = "pgvector"
     QDRANT_URL: str = "http://localhost:6333"
-    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_API_KEY: str | None = None
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
     RAG_TOP_K: int = 8
     RAG_RERANK_TOP_K: int = 4
@@ -118,21 +123,26 @@ class Settings(BaseSettings):
     STT_DEVICE: Literal["cuda", "cpu", "auto"] = "auto"
     STT_COMPUTE_TYPE: str = "float16"
     STT_LANGUAGE: str = "id"  # Bahasa Indonesia primary
-    DEEPGRAM_API_KEY: Optional[str] = None
+    DEEPGRAM_API_KEY: str | None = None
 
     TTS_BACKEND: Literal["piper", "azure", "elevenlabs", "coqui"] = "piper"
     TTS_VOICE: str = "id-ID-ArdiNeural"
     TTS_RATE: float = 1.0
-    AZURE_TTS_KEY: Optional[str] = None
-    AZURE_TTS_REGION: Optional[str] = None
-    ELEVENLABS_API_KEY: Optional[str] = None
+    AZURE_TTS_KEY: str | None = None
+    AZURE_TTS_REGION: str | None = None
+    ELEVENLABS_API_KEY: str | None = None
+
+    # Voice on/off switches — when false the stt/tts graph nodes become
+    # pass-throughs so the whole turn is text in / text out (cheaper testing).
+    TTS_ENABLED: bool = True
+    STT_ENABLED: bool = True
 
     AUDIO_DIR: Path = Path("/var/lib/kodmod/audio")
     UPLOAD_DIR: Path = Path("/var/lib/kodmod/uploads")
     MAX_AUDIO_SECONDS: int = 120
 
     # --------------------------------------------------------- observability
-    LANGSMITH_API_KEY: Optional[str] = None
+    LANGSMITH_API_KEY: str | None = None
     LANGSMITH_PROJECT: str = "kodmod-ai"
     LANGCHAIN_TRACING_V2: bool = False
     PROMETHEUS_ENABLED: bool = True

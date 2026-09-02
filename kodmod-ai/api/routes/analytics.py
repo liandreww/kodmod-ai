@@ -40,6 +40,7 @@ async def student_analytics(
     window: WindowName = Query("week"),
     student: Student = Depends(current_student),
 ) -> dict:
+    """Return a student's analytics rollup for the given time window."""
     if student.id != student_id:
         # In future: allow if requester is the teacher of this student.
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another student's analytics")
@@ -52,6 +53,7 @@ async def student_analytics_spoken(
     window: WindowName = Query("week"),
     student: Student = Depends(current_student),
 ) -> dict:
+    """Return an audio-friendly spoken summary of a student's analytics."""
     if student.id != student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another student's analytics")
     rollup = await StudentAggregator().summarise(student_id=student_id, window=window)
@@ -65,6 +67,7 @@ async def classroom_analytics(
     window: WindowName = Query("week"),
     teacher: Teacher = Depends(current_teacher),
 ) -> dict:
+    """Return a classroom-wide analytics rollup for the teacher dashboard."""
     return await ClassroomAggregator().summarise(classroom_id=classroom_id, window=window)
 
 
@@ -74,6 +77,7 @@ async def classroom_alerts(
     window: WindowName = Query("week"),
     teacher: Teacher = Depends(current_teacher),
 ) -> dict:
+    """Return teacher-facing alerts and per-student summaries for a classroom."""
     rollup = await ClassroomAggregator().summarise(classroom_id=classroom_id, window=window)
     alerts = generate_classroom_alerts(rollup)
     per_student_summaries = [

@@ -14,10 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.models import Concept, Lesson, Subject
 from database.session import async_session, close_db, init_db
@@ -26,18 +24,47 @@ logger = logging.getLogger(__name__)
 
 # (subject_name, [(concept_name, slug, description, difficulty), ...])
 SEED_DATA = [
-    ("Matematika", [
-        ("Pecahan",        "pecahan",        "Konsep dasar pecahan: pembilang dan penyebut.",      "easy"),
-        ("Persamaan Linear","persamaan-linear","Persamaan satu variabel berderajat satu.",          "medium"),
-        ("Bangun Datar",   "bangun-datar",   "Sifat segitiga, persegi, lingkaran, dan luasnya.",   "easy"),
-    ]),
-    ("Sains", [
-        ("Fotosintesis",   "fotosintesis",   "Proses tumbuhan mengubah cahaya menjadi energi.",    "medium"),
-        ("Sistem Tata Surya","tata-surya",   "Matahari, planet-planet, dan orbitnya.",             "easy"),
-    ]),
-    ("Bahasa Indonesia", [
-        ("Kalimat Efektif","kalimat-efektif","Ciri kalimat yang jelas, padat, dan tidak ambigu.",  "medium"),
-    ]),
+    (
+        "Matematika",
+        [
+            ("Pecahan", "pecahan", "Konsep dasar pecahan: pembilang dan penyebut.", "easy"),
+            (
+                "Persamaan Linear",
+                "persamaan-linear",
+                "Persamaan satu variabel berderajat satu.",
+                "medium",
+            ),
+            (
+                "Bangun Datar",
+                "bangun-datar",
+                "Sifat segitiga, persegi, lingkaran, dan luasnya.",
+                "easy",
+            ),
+        ],
+    ),
+    (
+        "Sains",
+        [
+            (
+                "Fotosintesis",
+                "fotosintesis",
+                "Proses tumbuhan mengubah cahaya menjadi energi.",
+                "medium",
+            ),
+            ("Sistem Tata Surya", "tata-surya", "Matahari, planet-planet, dan orbitnya.", "easy"),
+        ],
+    ),
+    (
+        "Bahasa Indonesia",
+        [
+            (
+                "Kalimat Efektif",
+                "kalimat-efektif",
+                "Ciri kalimat yang jelas, padat, dan tidak ambigu.",
+                "medium",
+            ),
+        ],
+    ),
 ]
 
 LESSON_TEMPLATES = {
@@ -118,14 +145,16 @@ async def upsert_lesson(session, concept: Concept) -> None:
     ).scalar_one_or_none()
     if existing:
         return
-    session.add(Lesson(
-        concept_id=concept.id,
-        title=title,
-        body_md=body,
-        audio_friendly_summary=body,
-        estimated_minutes=8,
-        accessibility_metadata={"prepared_for": "blind", "language": "id"},
-    ))
+    session.add(
+        Lesson(
+            concept_id=concept.id,
+            title=title,
+            body_md=body,
+            audio_friendly_summary=body,
+            estimated_minutes=8,
+            accessibility_metadata={"prepared_for": "blind", "language": "id"},
+        )
+    )
 
 
 async def main() -> None:

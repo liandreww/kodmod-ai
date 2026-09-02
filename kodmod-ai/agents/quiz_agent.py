@@ -15,6 +15,7 @@ Implements two related but distinct nodes:
 Both are designed for spoken delivery: questions are phrased to be
 unambiguous when heard once, and never reference visuals.
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,7 +24,6 @@ from uuid import uuid4
 
 from graphs.state import KODMODState, QuizQuestion
 from tools.llm_client import get_quiz_llm
-from tools.rag_tool import RAGTool
 
 log = logging.getLogger(__name__)
 
@@ -92,12 +92,16 @@ async def quiz_node(state: KODMODState) -> dict[str, Any]:
     # Prepend a tiny intro for the FIRST question of the session
     if idx == 0:
         spoken_question = (
-            f"Baik, kita mulai kuis. Ada {total} soal. Soal pertama: "
-            + spoken_question
+            f"Baik, kita mulai kuis. Ada {total} soal. Soal pertama: " + spoken_question
         )
 
-    log.info("Asking question %d/%d (concept=%s, difficulty=%s)",
-             question_number, total, q.get("concept_id"), q.get("difficulty"))
+    log.info(
+        "Asking question %d/%d (concept=%s, difficulty=%s)",
+        question_number,
+        total,
+        q.get("concept_id"),
+        q.get("difficulty"),
+    )
 
     return {
         "quiz_question": q,
@@ -154,8 +158,11 @@ async def mini_quiz_node(state: KODMODState) -> dict[str, Any]:
     raw = response.content if hasattr(response, "content") else str(response)
 
     import json
+
     try:
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
         log.warning("Mini-quiz JSON parse failed; skipping mini-quiz")
@@ -178,9 +185,7 @@ async def mini_quiz_node(state: KODMODState) -> dict[str, Any]:
         "quiz_questions": [question],
         "current_question_index": 0,
         "quiz_session_id": f"mini-{uuid4().hex[:8]}",
-        "generated_response": (
-            f"Cek pemahaman cepat: {question['text']}"
-        ),
+        "generated_response": (f"Cek pemahaman cepat: {question['text']}"),
         "next_action": "speak",
         "last_node": "mini_quiz",
     }

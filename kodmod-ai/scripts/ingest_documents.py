@@ -30,7 +30,9 @@ async def _resolve_concept_id(slug: str | None):
     if not slug:
         return None
     async with async_session() as session:
-        c = (await session.execute(select(Concept).where(Concept.slug == slug))).scalar_one_or_none()
+        c = (
+            await session.execute(select(Concept).where(Concept.slug == slug))
+        ).scalar_one_or_none()
     if c is None:
         raise SystemExit(f"Concept slug {slug!r} not found. Run seed_curriculum.py first?")
     return c.id
@@ -57,7 +59,9 @@ async def _amain(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", required=True, help="File or directory to ingest")
-    parser.add_argument("--concept-slug", default=None, help="Optional concept slug to attach chunks to")
+    parser.add_argument(
+        "--concept-slug", default=None, help="Optional concept slug to attach chunks to"
+    )
     parser.add_argument("--language", default="id")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

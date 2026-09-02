@@ -14,6 +14,7 @@ Evaluates a student's answer to a quiz question. Combines three signals:
 Outputs a `QuizAttempt` appended to `state["quiz_attempts"]` and updates
 `state["quiz_score"]` with the score for THIS attempt (0.0–1.0).
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-from graphs.state import KODMODState, QuizAttempt
+from graphs.state import KODMODState, QuizAttempt, QuizQuestion
 from rag.embeddings import embed_text
 from tools.llm_client import get_scoring_llm
 
@@ -77,7 +78,8 @@ async def scoring_node(state: KODMODState) -> dict[str, Any]:
         # Convert similarity to score with a small floor for "close enough"
         score = float(np.clip((sim - 0.3) / 0.6, 0.0, 1.0))
         feedback = (
-            "Tepat sekali!" if score >= 0.85
+            "Tepat sekali!"
+            if score >= 0.85
             else "Hampir benar, mari kita perjelas."
             if score >= 0.5
             else "Belum tepat. Tidak apa-apa, kita coba pelajari lagi."
@@ -93,9 +95,14 @@ async def scoring_node(state: KODMODState) -> dict[str, Any]:
 # Strategies
 # ---------------------------------------------------------------------------
 
+
 def _score_mcq(student_answer: str, expected: str, options: list[str]) -> tuple[float, str]:
     s = student_answer.lower().strip().rstrip(".!?")
     e = expected.lower().strip().rstrip(".!?")
+    if not e:
+        # No canonical answer to match against — never award credit blindly
+        # (``s.endswith("")`` is always True).
+        return 0.0, "Belum tepat."
     # Accept "A", "a", "jawaban A", or the full option text
     if s == e or s.endswith(e) or s.startswith(e[:1] + " ") or s == e[:1]:
         return 1.0, "Benar."
@@ -109,19 +116,24 @@ def _score_mcq(student_answer: str, expected: str, options: list[str]) -> tuple[
 async def _semantic_similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
-    va, vb = await embed_text([a, b])
-    va, vb = np.asarray(va), np.asarray(vb)
+    raw_a, raw_b = await embed_text([a, b])
+    va, vb = np.asarray(raw_a), np.asarray(raw_b)
     cos = float(np.dot(va, vb) / (np.linalg.norm(va) * np.linalg.norm(vb) + 1e-9))
     return cos
 
 
 async def _score_with_rubric(
-    state: KODMODState, question: dict, student_answer: str, expected: str, rubric: dict
+    state: KODMODState,
+    question: QuizQuestion | dict[str, Any],
+    student_answer: str,
+    expected: str,
+    rubric: dict,
 ) -> dict[str, Any]:
     import json
+
     llm = get_scoring_llm()
     payload = (
-        f"Question: {question.get('text','')}\n"
+        f"Question: {question.get('text', '')}\n"
         f"Expected: {expected}\n"
         f"Rubric: {json.dumps(rubric, ensure_ascii=False)}\n"
         f"Student answer (from speech): {student_answer}"
@@ -134,12 +146,19 @@ async def _score_with_rubric(
     )
     raw = response.content if hasattr(response, "content") else str(response)
     try:
-        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        cleaned = (
+            raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
         result = json.loads(cleaned)
     except json.JSONDecodeError:
         log.warning("Rubric JSON parse failed; defaulting to 0.0")
-        result = {"score": 0.0, "is_correct": False, "confidence": 0.3,
-                  "feedback": "Maaf, sistem belum bisa menilai jawaban itu.", "missed_keywords": []}
+        result = {
+            "score": 0.0,
+            "is_correct": False,
+            "confidence": 0.3,
+            "feedback": "Maaf, sistem belum bisa menilai jawaban itu.",
+            "missed_keywords": [],
+        }
 
     attempt = _build_attempt(
         question,
@@ -156,8 +175,9 @@ async def _score_with_rubric(
 # Builders
 # ---------------------------------------------------------------------------
 
+
 def _build_attempt(
-    question: dict,
+    question: QuizQuestion | dict[str, Any],
     student_answer: str,
     score: float,
     feedback: str,
@@ -185,10 +205,11 @@ def _empty_attempt(state: KODMODState, reason: str) -> dict[str, Any]:
 
 
 def _emit(state: KODMODState, attempt: QuizAttempt) -> dict[str, Any]:
-    attempts = list(state.get("quiz_attempts", [])) + [attempt]
+    attempts = [*state.get("quiz_attempts", []), attempt]
     cumulative = sum(a["score"] for a in attempts) / max(len(attempts), 1)
-    log.info("Scored attempt: %.2f (cumulative %.2f, n=%d)",
-             attempt["score"], cumulative, len(attempts))
+    log.info(
+        "Scored attempt: %.2f (cumulative %.2f, n=%d)", attempt["score"], cumulative, len(attempts)
+    )
     return {
         "quiz_attempts": attempts,
         "quiz_score": attempt["score"],

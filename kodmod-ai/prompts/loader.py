@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ _PROMPTS_DIR = Path(__file__).resolve().parent
 
 
 @lru_cache(maxsize=64)
-def load_prompt(name: str, *, language: Optional[str] = None) -> str:
+def load_prompt(name: str, *, language: str | None = None) -> str:
     """
     Load a prompt by name. If `language` is given, prefers `<name>.<language>.md`,
     falling back to `<name>.md`.
@@ -48,7 +47,7 @@ def load_prompt(name: str, *, language: Optional[str] = None) -> str:
     )
 
 
-def render_prompt(name: str, *, language: Optional[str] = None, **kwargs) -> str:
+def render_prompt(name: str, *, language: str | None = None, **kwargs) -> str:
     template = load_prompt(name, language=language)
     try:
         return template.format(**kwargs)

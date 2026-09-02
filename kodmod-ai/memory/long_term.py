@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
 
 from sqlalchemy import desc, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -45,10 +44,14 @@ async def load_profile(student_id: uuid.UUID) -> dict:
             return {}
 
         mastery_rows = (
-            await session.execute(
-                select(MasteryScore).where(MasteryScore.student_id == student_id)
+            (
+                await session.execute(
+                    select(MasteryScore).where(MasteryScore.student_id == student_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         mastery = {str(m.concept_id): float(m.mastery) for m in mastery_rows}
 
         # Streak: consecutive days with at least one session.
@@ -67,13 +70,17 @@ async def load_profile(student_id: uuid.UUID) -> dict:
 
 async def _compute_streak(session, student_id: uuid.UUID) -> int:
     sessions = (
-        await session.execute(
-            select(LearningSession.started_at)
-            .where(LearningSession.student_id == student_id)
-            .order_by(desc(LearningSession.started_at))
-            .limit(60)
+        (
+            await session.execute(
+                select(LearningSession.started_at)
+                .where(LearningSession.student_id == student_id)
+                .order_by(desc(LearningSession.started_at))
+                .limit(60)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     if not sessions:
         return 0
@@ -128,16 +135,18 @@ async def update_mastery(
 async def fetch_weak_concepts(student_id: uuid.UUID, n: int = 5) -> list[dict]:
     async with async_session() as session:
         rows = (
-            await session.execute(
-                select(MasteryScore)
-                .where(MasteryScore.student_id == student_id)
-                .order_by(MasteryScore.mastery.asc())
-                .limit(n)
+            (
+                await session.execute(
+                    select(MasteryScore)
+                    .where(MasteryScore.student_id == student_id)
+                    .order_by(MasteryScore.mastery.asc())
+                    .limit(n)
+                )
             )
-        ).scalars().all()
-        return [
-            {"concept_id": str(r.concept_id), "mastery": float(r.mastery)} for r in rows
-        ]
+            .scalars()
+            .all()
+        )
+        return [{"concept_id": str(r.concept_id), "mastery": float(r.mastery)} for r in rows]
 
 
 # ------------------------------------------------------- misconceptions --
@@ -147,21 +156,31 @@ async def record_misconception(
     description: str,
 ) -> None:
     async with async_session() as session:
-        session.add(Misconception(
-            student_id=student_id, concept_id=concept_id, description=description,
-        ))
+        session.add(
+            Misconception(
+                student_id=student_id,
+                concept_id=concept_id,
+                description=description,
+            )
+        )
 
 
 async def fetch_open_misconceptions(student_id: uuid.UUID) -> list[dict]:
     async with async_session() as session:
         rows = (
-            await session.execute(
-                select(Misconception)
-                .where(Misconception.student_id == student_id, Misconception.resolved.is_(False))
-                .order_by(Misconception.detected_at.desc())
-                .limit(20)
+            (
+                await session.execute(
+                    select(Misconception)
+                    .where(
+                        Misconception.student_id == student_id, Misconception.resolved.is_(False)
+                    )
+                    .order_by(Misconception.detected_at.desc())
+                    .limit(20)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [
             {
                 "id": str(r.id),
@@ -179,10 +198,10 @@ async def log_interaction(
     *,
     role: str,
     text: str,
-    intent: Optional[str] = None,
-    audio_path: Optional[str] = None,
-    latency_ms: Optional[int] = None,
-    metadata: Optional[dict] = None,
+    intent: str | None = None,
+    audio_path: str | None = None,
+    latency_ms: int | None = None,
+    metadata: dict | None = None,
 ) -> None:
     async with async_session() as session:
         session.add(
@@ -205,7 +224,7 @@ async def store_recommendation(
     kind: str,
     title: str,
     body: str,
-    target_concept_id: Optional[uuid.UUID] = None,
+    target_concept_id: uuid.UUID | None = None,
     priority: int = 1,
 ) -> uuid.UUID:
     async with async_session() as session:
@@ -225,13 +244,19 @@ async def store_recommendation(
 async def fetch_active_recommendations(student_id: uuid.UUID, limit: int = 5) -> list[dict]:
     async with async_session() as session:
         rows = (
-            await session.execute(
-                select(Recommendation)
-                .where(Recommendation.student_id == student_id, Recommendation.consumed.is_(False))
-                .order_by(Recommendation.priority.asc(), Recommendation.created_at.desc())
-                .limit(limit)
+            (
+                await session.execute(
+                    select(Recommendation)
+                    .where(
+                        Recommendation.student_id == student_id, Recommendation.consumed.is_(False)
+                    )
+                    .order_by(Recommendation.priority.asc(), Recommendation.created_at.desc())
+                    .limit(limit)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         return [
             {
                 "id": str(r.id),

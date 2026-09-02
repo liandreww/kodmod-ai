@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+    branches: [main, hanif]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: kodmod-ai
+
+env:
+  PYTHON_VERSION: "3.11"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # ------------------------------------------------------------------ Stage 0 --
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - name: stage 0 — static & build gate
+        # Single pytest run of `-m static` (tests/static/, spec docs/testplan/00-static.md):
+        # ruff, ruff format, mypy, bandit, pip-audit, detect-secrets, import
+        # smoke, settings load, compose config, marker/collection checks. The
+        # runner has Docker so image-build cases (`static and slow`) run too.
+        run: python -m pytest -q -m "static and not known_bug" --junitxml=reports/junit-static.xml
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: reports-static, path: kodmod-ai/reports/ }
+
+  build-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f docker/Dockerfile -t kodmod-api:ci .
+      - run: docker build -f docker/llm_stub/Dockerfile -t kodmod-llmstub:ci docker/llm_stub
+      - name: trivy image scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: kodmod-api:ci
+          severity: HIGH,CRITICAL
+          exit-code: "0"   # report only for now; flip to "1" for KM-READY-007
+
+  # --------------------------------------------------------------- Stage 1-2 --
+  unit-contract:
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q -m "(unit or contract) and not known_bug" --junitxml=reports/junit-unit-contract.xml --cov --cov-report=xml:reports/coverage-unit.xml
+      - name: known-bug burndown (informational — FAIL = bug still open)
+        continue-on-error: true
+        run: python -m pytest -q -m "known_bug and (static or unit or contract)" -rN --junitxml=reports/junit-known-bug.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: reports-unit-contract, path: kodmod-ai/reports/ }
+
+  # ------------------------------------------------------------------ Stage 3 --
+  # Integration talks to Python functions directly (no `api` container needed) --
+  # only Postgres + Redis, provided as plain GH Actions services.
+  integration:
+    runs-on: ubuntu-latest
+    needs: unit-contract
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: kodmod, POSTGRES_PASSWORD: kodmod, POSTGRES_DB: kodmod_test }
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kodmod -d kodmod_test"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 15
+    env:
+      ENV: test
+      DB_HOST: localhost
+      DB_PORT: "5433"
+      DB_NAME: kodmod_test
+      REDIS_HOST: localhost
+      REDIS_PORT: "6380"
+      EMBEDDING_DIM: "1024"
+      STT_ENABLED: "false"
+      TTS_ENABLED: "false"
+      JWT_SECRET: test-secret-not-for-prod-0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - name: create test schema + seed
+        run: python -m scripts.create_test_db && python -m scripts.seed_curriculum
+      - run: python -m pytest -q -m "integration and not known_bug" --junitxml=reports/junit-integration.xml --cov --cov-report=xml:reports/coverage-integration.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: reports-integration, path: kodmod-ai/reports/ }
+
+  # -------------------------------------------------------------- Stage 4-6 --
+  # kodmod-ai runs entirely in Docker here too: docker compose brings up the
+  # real `api` container (+ its deps), pytest runs on the RUNNER (not inside
+  # a container) and talks to it over real HTTP/WS on localhost:8000.
+  api-ws-e2e:
+    runs-on: ubuntu-latest
+    needs: [integration, build-images]
+    steps:
+      - uses: actions/checkout@v4
+      - name: bring up app stack (postgres, redis, llm-stub, db-init, api)
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+      - name: wait for api
+        run: for i in $(seq 1 30); do curl -fsS http://localhost:8000/live && break || sleep 3; done
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q -m "(api or ws or e2e) and not known_bug" --junitxml=reports/junit-api-ws-e2e.xml
+      - name: dump logs on failure
+        if: failure()
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml logs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: reports-api-ws-e2e, path: kodmod-ai/reports/ }
+      - name: tear down
+        if: always()
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml down -v
+
+  # ----------------------------------------------------------------- Stage 7 --
+  system:
+    runs-on: ubuntu-latest
+    needs: api-ws-e2e
+    steps:
+      - uses: actions/checkout@v4
+      - name: bring up app stack
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+      - name: wait for api
+        run: for i in $(seq 1 30); do curl -fsS http://localhost:8000/live && break || sleep 3; done
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q -m "system and not known_bug" --junitxml=reports/junit-system.xml
+      - name: dump logs on failure
+        if: failure()
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml logs
+      - name: tear down
+        if: always()
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml down -v
+
+  # ----------------------------------------------------------------- Stage 9 --
+  security:
+    runs-on: ubuntu-latest
+    needs: api-ws-e2e
+    steps:
+      - uses: actions/checkout@v4
+      - name: bring up app stack
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+      - name: wait for api
+        run: for i in $(seq 1 30); do curl -fsS http://localhost:8000/live && break || sleep 3; done
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q -m "security and not known_bug" --junitxml=reports/junit-security.xml
+      - if: always()
+        run: docker compose -p kodmod-test -f docker/docker-compose.test.yml down -v
+
+  # -------------------------------------------------- Stage 8 (nightly only) --
+  load:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    needs: system
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile load up -d --build
+      - run: for i in $(seq 1 30); do curl -fsS http://localhost:8000/live && break || sleep 3; done
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}", cache: pip }
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q -m "perf and not known_bug" --benchmark-json=docs/testplan/baselines/bench.json || true
+      - uses: actions/upload-artifact@v4
+        with: { name: perf-baselines, path: kodmod-ai/docs/testplan/baselines/ }

@@ -27,7 +27,6 @@ from __future__ import annotations
 import base64
 import logging
 import re
-from typing import Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -37,18 +36,31 @@ logger = logging.getLogger(__name__)
 
 # Indonesian + English visual reference patterns.
 _VISUAL_PATTERNS = [
-    (re.compile(r"\b(?:seperti |lihat )?(?:pada )?gambar(?:\s+\d+(?:\.\d+)?)?\b", re.I),
-     "berdasarkan ilustrasi yang dijelaskan"),
-    (re.compile(r"\b(?:lihat|perhatikan)\s+(?:tabel|diagram|grafik|bagan)(?:\s+\w+)?\b", re.I),
-     "perhatikan penjelasan berikut"),
-    (re.compile(r"\b(?:see|refer to)\s+(?:figure|image|diagram|chart|table)\s*\d*\.?\d*\b", re.I),
-     "based on the described illustration"),
-    (re.compile(r"\b(?:di|pada)\s+(?:gambar|tabel|diagram)\s+(?:di\s+)?(?:atas|bawah|samping)\b", re.I),
-     "berdasarkan penjelasan sebelumnya"),
-    (re.compile(r"\bgaris\s+(?:berwarna\s+)?(?:merah|biru|hijau|kuning|hitam)\b", re.I),
-     "garis penanda"),
-    (re.compile(r"\barea\s+(?:berwarna|berarsir)\s+\w+\b", re.I),
-     "area yang ditandai"),
+    (
+        re.compile(r"\b(?:seperti |lihat )?(?:pada )?gambar(?:\s+\d+(?:\.\d+)?)?\b", re.I),
+        "berdasarkan ilustrasi yang dijelaskan",
+    ),
+    (
+        re.compile(r"\b(?:lihat|perhatikan)\s+(?:tabel|diagram|grafik|bagan)(?:\s+\w+)?\b", re.I),
+        "perhatikan penjelasan berikut",
+    ),
+    (
+        re.compile(
+            r"\b(?:see|refer to)\s+(?:figure|image|diagram|chart|table)\s*\d*\.?\d*\b", re.I
+        ),
+        "based on the described illustration",
+    ),
+    (
+        re.compile(
+            r"\b(?:di|pada)\s+(?:gambar|tabel|diagram)\s+(?:di\s+)?(?:atas|bawah|samping)\b", re.I
+        ),
+        "berdasarkan penjelasan sebelumnya",
+    ),
+    (
+        re.compile(r"\bgaris\s+(?:berwarna\s+)?(?:merah|biru|hijau|kuning|hitam)\b", re.I),
+        "garis penanda",
+    ),
+    (re.compile(r"\barea\s+(?:berwarna|berarsir)\s+\w+\b", re.I), "area yang ditandai"),
 ]
 
 _VISUAL_FALLBACK = re.compile(
@@ -60,7 +72,7 @@ _VISUAL_FALLBACK = re.compile(
 def describe_visuals_in_text(
     text: str,
     *,
-    context_descriptions: Optional[dict[str, str]] = None,
+    context_descriptions: dict[str, str] | None = None,
 ) -> str:
     """
     Replace visual references with audio-friendly substitutes.
@@ -79,6 +91,7 @@ def describe_visuals_in_text(
 
     # 2. Substitute known figure references with their stored descriptions.
     if context_descriptions:
+
         def _replace(m: re.Match) -> str:
             key = m.group(0).lower().replace(" ", "_")
             for fig_id, desc in context_descriptions.items():
@@ -111,7 +124,7 @@ async def describe_image(
     image_bytes: bytes,
     *,
     mime_type: str = "image/png",
-    extra_context: Optional[str] = None,
+    extra_context: str | None = None,
 ) -> str:
     """
     Multimodal vision narration. Uses the tutor LLM (Claude/GPT-4) which
@@ -119,18 +132,23 @@ async def describe_image(
     """
     try:
         b64 = base64.b64encode(image_bytes).decode("ascii")
-        llm = get_tutor_llm(temperature=0.2)
+        llm = get_tutor_llm()
         user_content = [
-            {"type": "text", "text": (extra_context or "Deskripsikan gambar ini untuk siswa tunanetra.")},
+            {
+                "type": "text",
+                "text": (extra_context or "Deskripsikan gambar ini untuk siswa tunanetra."),
+            },
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime_type};base64,{b64}"},
             },
         ]
-        resp = await llm.ainvoke([
-            SystemMessage(content=_VISION_SYSTEM),
-            HumanMessage(content=user_content),
-        ])
+        resp = await llm.ainvoke(
+            [
+                SystemMessage(content=_VISION_SYSTEM),
+                HumanMessage(content=user_content),
+            ]
+        )
         text = resp.content if hasattr(resp, "content") else str(resp)
         if isinstance(text, list):
             # some providers return list-of-dicts

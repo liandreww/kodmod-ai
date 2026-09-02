@@ -1,0 +1,12 @@
+# Dependency-CVE waivers for KM-STATIC-030 / KM-STATIC-031.
+#
+# One vulnerability id per line (e.g. GHSA-xxxx-xxxx-xxxx or PYSEC-2024-123).
+# Every entry MUST carry a dated justification comment and an owner, e.g.
+#
+#   GHSA-1234-5678-9abc  # 2026-09-02 transitive via <pkg>; no fix released; not reachable — @hanif
+#
+# An empty file means "no accepted vulnerabilities": pip-audit / safety must be
+# clean. Review every waiver at each release-readiness gate (Stage 10).
+
+GHSA-wwv5-g3v4-889x  # 2026-09-02 tornado 6.5.x XSRF cookie; enters the dev box via JupyterLab/ipykernel only — not in requirements.txt / pyproject / the Docker image. Re-review Stage 10 — @hanif
+GHSA-8423-8fgw-73vq  # 2026-09-02 tornado 6.5.x open-redirect; same rationale (local Jupyter only) — @hanif

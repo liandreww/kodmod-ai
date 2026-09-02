@@ -49,6 +49,12 @@ htmlcov/
 /data/curriculum/*.cached/
 /audio_cache/
 
+# --- Test artifacts (baselines under docs/testplan/baselines/ ARE tracked)
+/reports/
+/.runtime/
+/.secrets.baseline.new
+.benchmarks/
+
 # --- Docker / build artifacts
 *.log
 docker/grafana/*.json.tmp

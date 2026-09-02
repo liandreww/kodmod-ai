@@ -27,6 +27,7 @@ router = APIRouter()
 
 @router.get("/me", response_model=StudentOut)
 async def get_me(student: Student = Depends(current_student)) -> Student:
+    """Return the profile of the currently authenticated student."""
     return student
 
 
@@ -35,6 +36,7 @@ async def create_student(
     payload: StudentCreate,
     session: AsyncSession = Depends(db_session),
 ) -> Student:
+    """Create a new student record (admin / onboarding flow)."""
     student = Student(
         full_name=payload.full_name,
         email=payload.email,
@@ -54,6 +56,7 @@ async def get_student_profile(
     student_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
 ) -> StudentProfileOut:
+    """Return a student's extended profile: mastery, weak concepts, streak."""
     student = await session.get(Student, student_id)
     if student is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Student not found")

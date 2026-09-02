@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Query, WebSocket, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
@@ -40,14 +39,14 @@ def _decode_jwt(token: str) -> dict:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid token: {e}") from e
 
 
-def _bearer(authorization: Optional[str]) -> str:
+def _bearer(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
     return authorization.split(" ", 1)[1].strip()
 
 
 async def current_student(
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
     session: AsyncSession = Depends(db_session),
 ) -> Student:
     payload = _decode_jwt(_bearer(authorization))
@@ -62,7 +61,7 @@ async def current_student(
 
 
 async def current_teacher(
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
     session: AsyncSession = Depends(db_session),
 ) -> Teacher:
     payload = _decode_jwt(_bearer(authorization))
@@ -78,7 +77,7 @@ async def current_teacher(
 
 async def authenticate_ws(
     websocket: WebSocket,
-    token: Optional[str] = Query(default=None),
+    token: str | None = Query(default=None),
 ) -> Student:
     """For WebSockets: token is passed as a query param to avoid header gymnastics."""
     if not token:
@@ -103,9 +102,9 @@ async def authenticate_ws(
 
 # ---------------------------------------------------- dev convenience --
 async def optional_student(
-    authorization: Optional[str] = Header(None),
+    authorization: str | None = Header(None),
     session: AsyncSession = Depends(db_session),
-) -> Optional[Student]:
+) -> Student | None:
     """Allows endpoints that work for guests but enrich for logged-in users."""
     if not authorization:
         return None

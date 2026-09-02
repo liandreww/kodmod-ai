@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from sqlalchemy import desc, select
 
@@ -47,7 +47,7 @@ async def record_episode(
     *,
     title: str,
     description: str,
-    payload: Optional[dict] = None,
+    payload: dict | None = None,
 ) -> uuid.UUID:
     """Persist an episode. Returns the report id."""
     async with async_session() as session:
@@ -64,16 +64,14 @@ async def record_episode(
         )
         session.add(report)
         await session.flush()
-        logger.info(
-            "Recorded episode kind=%s student=%s title=%r", kind, student_id, title
-        )
+        logger.info("Recorded episode kind=%s student=%s title=%r", kind, student_id, title)
         return report.id
 
 
 async def fetch_recent_episodes(
     student_id: uuid.UUID,
     *,
-    kinds: Optional[list[EpisodeKind]] = None,
+    kinds: list[EpisodeKind] | None = None,
     limit: int = 10,
 ) -> list[dict]:
     """Return the most recent episodes (optionally filtered by kind)."""
@@ -92,14 +90,16 @@ async def fetch_recent_episodes(
         payload = r.payload or {}
         if kinds and payload.get("kind") not in kinds:
             continue
-        out.append({
-            "id": str(r.id),
-            "kind": payload.get("kind"),
-            "title": payload.get("title"),
-            "description": payload.get("description"),
-            "details": payload.get("details", {}),
-            "generated_at": r.generated_at.isoformat() if r.generated_at else None,
-        })
+        out.append(
+            {
+                "id": str(r.id),
+                "kind": payload.get("kind"),
+                "title": payload.get("title"),
+                "description": payload.get("description"),
+                "details": payload.get("details", {}),
+                "generated_at": r.generated_at.isoformat() if r.generated_at else None,
+            }
+        )
     return out
 
 

@@ -19,6 +19,7 @@ All models are wrapped in LangChain's chat-model abstraction so we can swap
 providers without touching agent code. Set `KODMOD_LLM_PROVIDER` env var to
 choose: `anthropic` | `openai` | `ollama` | `vllm`.
 """
+
 from __future__ import annotations
 
 import os
@@ -34,8 +35,10 @@ def _provider() -> str:
 # Anthropic-backed factory (default)
 # ---------------------------------------------------------------------------
 
+
 def _anthropic(model: str, **kwargs: Any):
     from langchain_anthropic import ChatAnthropic
+
     return ChatAnthropic(
         model=model,
         temperature=kwargs.get("temperature", 0.4),
@@ -46,6 +49,7 @@ def _anthropic(model: str, **kwargs: Any):
 
 def _openai(model: str, **kwargs: Any):
     from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=model,
         temperature=kwargs.get("temperature", 0.4),
@@ -56,6 +60,7 @@ def _openai(model: str, **kwargs: Any):
 
 def _ollama(model: str, **kwargs: Any):
     from langchain_ollama import ChatOllama
+
     return ChatOllama(
         model=model,
         temperature=kwargs.get("temperature", 0.4),
@@ -66,6 +71,7 @@ def _ollama(model: str, **kwargs: Any):
 def _vllm(model: str, **kwargs: Any):
     """For self-hosted vLLM endpoints, use the OpenAI-compatible client."""
     from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=model,
         base_url=os.getenv("VLLM_BASE_URL", "http://vllm:8000/v1"),
@@ -88,15 +94,16 @@ _FACTORIES = {
 # Per-role getters (memoized so we don't re-instantiate per request)
 # ---------------------------------------------------------------------------
 
+
 @lru_cache(maxsize=1)
 def get_router_llm():
     """Fast, small. ~200 ms target."""
     p = _provider()
     model = {
         "anthropic": "claude-haiku-4-5-20251001",
-        "openai":    "gpt-4o-mini",
-        "ollama":    "llama3.1:8b",
-        "vllm":      "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "openai": "gpt-5.6-luna",
+        "ollama": "llama3.1:8b",
+        "vllm": "meta-llama/Meta-Llama-3.1-8B-Instruct",
     }[p]
     return _FACTORIES[p](model, temperature=0.0, max_tokens=256, streaming=False)
 
@@ -107,9 +114,9 @@ def get_tutor_llm():
     p = _provider()
     model = {
         "anthropic": "claude-opus-4-7",
-        "openai":    "gpt-4.1",
-        "ollama":    "llama3.1:70b",
-        "vllm":      "meta-llama/Meta-Llama-3.1-70B-Instruct",
+        "openai": "gpt-5.6-luna",
+        "ollama": "llama3.1:70b",
+        "vllm": "meta-llama/Meta-Llama-3.1-70B-Instruct",
     }[p]
     return _FACTORIES[p](model, temperature=0.5, max_tokens=1500, streaming=True)
 
@@ -119,9 +126,9 @@ def get_quiz_llm():
     p = _provider()
     model = {
         "anthropic": "claude-sonnet-4-6",
-        "openai":    "gpt-4.1-mini",
-        "ollama":    "qwen2.5:14b",
-        "vllm":      "Qwen/Qwen2.5-14B-Instruct",
+        "openai": "gpt-5.6-luna",
+        "ollama": "qwen2.5:14b",
+        "vllm": "Qwen/Qwen2.5-14B-Instruct",
     }[p]
     return _FACTORIES[p](model, temperature=0.3, max_tokens=2048, streaming=False)
 
@@ -131,9 +138,9 @@ def get_scoring_llm():
     p = _provider()
     model = {
         "anthropic": "claude-sonnet-4-6",
-        "openai":    "gpt-4.1-mini",
-        "ollama":    "qwen2.5:14b",
-        "vllm":      "Qwen/Qwen2.5-14B-Instruct",
+        "openai": "gpt-5.6-luna",
+        "ollama": "qwen2.5:14b",
+        "vllm": "Qwen/Qwen2.5-14B-Instruct",
     }[p]
     return _FACTORIES[p](model, temperature=0.0, max_tokens=512, streaming=False)
 

@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter
 from sqlalchemy import text
 
 from config.settings import settings
@@ -24,11 +24,13 @@ router = APIRouter()
 
 @router.get("/live")
 async def live() -> dict[str, Any]:
+    """Liveness probe — returns 200 as long as the process is running."""
     return {"status": "alive", "ts": datetime.utcnow().isoformat()}
 
 
 @router.get("/ready")
 async def ready() -> dict[str, Any]:
+    """Readiness probe — checks that Postgres and Redis are reachable."""
     checks: dict[str, Any] = {}
     overall = True
 
@@ -65,6 +67,7 @@ async def ready() -> dict[str, Any]:
 
 @router.get("/version")
 async def version() -> dict[str, Any]:
+    """Build and runtime metadata — app version, env, and selected backends."""
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,

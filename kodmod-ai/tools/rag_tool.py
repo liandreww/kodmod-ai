@@ -23,18 +23,18 @@ Two retrieval modes
 * `retrieve()`     — returns dicts (used as a normal Python tool)
 * `as_langchain_tool()` — returns a LangChain `Tool` for agents that bind tools
 """
+
 from __future__ import annotations
 
 import logging
 import os
 from typing import Any
 
-import numpy as np
 from langchain_core.tools import Tool
 
+from graphs.state import RetrievedDoc
 from rag.embeddings import embed_text
 from rag.reranker import rerank
-from graphs.state import RetrievedDoc
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +52,10 @@ class RAGTool:
         backend = os.getenv("KODMOD_VECTOR_STORE", "pgvector")
         if backend == "qdrant":
             from rag.stores.qdrant_store import QdrantStore
+
             return QdrantStore()
         from rag.stores.pgvector_store import PgVectorStore
+
         return PgVectorStore()
 
     # -----------------------------------------------------------------
@@ -84,8 +86,9 @@ class RAGTool:
         # 3. Cross-encoder rerank for precision
         reranked = await rerank(query, candidates, top_k=k)
 
-        log.info("RAG: query='%s' retrieved=%d returned=%d",
-                 query[:50], len(candidates), len(reranked))
+        log.info(
+            "RAG: query='%s' retrieved=%d returned=%d", query[:50], len(candidates), len(reranked)
+        )
 
         return [
             RetrievedDoc(
@@ -103,9 +106,8 @@ class RAGTool:
     def as_langchain_tool(self) -> Tool:
         async def _arun(query: str) -> str:
             docs = await self.retrieve(query)
-            return "\n---\n".join(
-                f"[{d['source']}] {d['text']}" for d in docs
-            )
+            return "\n---\n".join(f"[{d['source']}] {d['text']}" for d in docs)
+
         return Tool(
             name="curriculum_search",
             description=(
@@ -119,6 +121,7 @@ class RAGTool:
 # ---------------------------------------------------------------------------
 # LangGraph node — used as 'rag_retrieval' in the main graph
 # ---------------------------------------------------------------------------
+
 
 async def rag_retrieval_node(state) -> dict:
     """LangGraph node wrapper around RAGTool.retrieve."""

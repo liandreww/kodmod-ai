@@ -18,6 +18,7 @@ For partial transcripts during live voice input, see
 `voice/streaming.py::StreamingSTT` which emits incremental results to the
 WebSocket independently of the LangGraph turn boundary.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,8 +27,8 @@ import os
 from functools import lru_cache
 from typing import Any
 
-from graphs.state import KODMODState
 from config.settings import settings
+from graphs.state import KODMODState
 
 log = logging.getLogger(__name__)
 
@@ -36,9 +37,11 @@ log = logging.getLogger(__name__)
 # Model loading
 # ---------------------------------------------------------------------------
 
+
 @lru_cache(maxsize=1)
 def _faster_whisper_model():
     from faster_whisper import WhisperModel
+
     size = os.getenv("KODMOD_WHISPER_SIZE", "large-v3")
     device = os.getenv("KODMOD_WHISPER_DEVICE", "cuda")
     compute = os.getenv("KODMOD_WHISPER_COMPUTE", "float16")
@@ -50,10 +53,11 @@ def _faster_whisper_model():
 # LangGraph node
 # ---------------------------------------------------------------------------
 
+
 async def stt_node(state: KODMODState) -> dict[str, Any]:
     """Transcribe state['audio_input_path'] to state['transcribed_text']."""
     path = state.get("audio_input_path", "")
-    if not path:
+    if not path or not settings.STT_ENABLED:
         # Allow text-only invocation (e.g. teacher dashboard chat)
         text = state.get("user_input", "")
         return {
@@ -84,6 +88,7 @@ async def stt_node(state: KODMODState) -> dict[str, Any]:
 # Backend implementations
 # ---------------------------------------------------------------------------
 
+
 async def _fw_stt(path: str) -> tuple[str, str]:
     model = _faster_whisper_model()
 
@@ -103,11 +108,14 @@ async def _fw_stt(path: str) -> tuple[str, str]:
 
 async def _openai_stt(path: str) -> tuple[str, str]:
     from openai import AsyncOpenAI
+
     client = AsyncOpenAI()
     local_path = _ensure_local(path)
     with open(local_path, "rb") as f:
         result = await client.audio.transcriptions.create(
-            model="whisper-1", file=f, response_format="verbose_json",
+            model="whisper-1",
+            file=f,
+            response_format="verbose_json",
         )
     return result.text, result.language
 
@@ -115,12 +123,16 @@ async def _openai_stt(path: str) -> tuple[str, str]:
 async def _deepgram_stt(path: str) -> tuple[str, str]:
     """Used mostly via the streaming path, but also exposed here for batch."""
     from deepgram import DeepgramClient, PrerecordedOptions
+
     dg = DeepgramClient(os.getenv("DEEPGRAM_API_KEY"))
     local_path = _ensure_local(path)
     with open(local_path, "rb") as f:
         payload = {"buffer": f.read()}
     options = PrerecordedOptions(
-        model="nova-2", language="multi", smart_format=True, punctuate=True,
+        model="nova-2",
+        language="multi",
+        smart_format=True,
+        punctuate=True,
     )
     resp = await dg.listen.asyncrest.v("1").transcribe_file(payload, options)
     transcript = resp["results"]["channels"][0]["alternatives"][0]["transcript"]
@@ -132,10 +144,12 @@ async def _deepgram_stt(path: str) -> tuple[str, str]:
 # I/O helpers
 # ---------------------------------------------------------------------------
 
+
 def _ensure_local(uri: str) -> str:
     """Download remote URIs to a temp file and return a local path."""
     if uri.startswith(("http://", "https://", "s3://", "minio://")):
         from voice.streaming import fetch_audio
+
         return fetch_audio(uri)
     return uri
 
