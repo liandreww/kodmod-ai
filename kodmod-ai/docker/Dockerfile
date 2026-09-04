@@ -18,9 +18,13 @@ ARG APP_UID=1001
 # ------------------------------------------------------------------- builder --
 FROM ${BASE_IMAGE} AS builder
 
+# NOTE: PIP_NO_CACHE_DIR is deliberately NOT set — the pip download cache is
+# kept in a BuildKit cache mount below (see the `pip install` RUN), so it never
+# lands in an image layer but *is* reused across builds. That way a busted
+# `pip install` layer reinstalls from local wheels instead of re-downloading
+# from PyPI.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,12 +41,17 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy only the dep manifests first to maximise layer cache hits.
-COPY pyproject.toml requirements.txt ./
-RUN pip install --upgrade pip wheel setuptools \
+# Copy ONLY requirements.txt first to maximise layer cache hits: this layer —
+# and the expensive `pip install` below — must not be invalidated by source
+# edits, nor by pyproject.toml changes (ruff/pytest config etc.), which the
+# build does not read. The full tree (pyproject.toml included) arrives later.
+COPY requirements.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip wheel setuptools \
  && pip install -r requirements.txt
 
-# Now copy the source tree.
+# Now copy the source tree. Edits here rebuild only this cheap COPY layer
+# onward — `pip install` above stays cached.
 COPY . /build
 
 # ------------------------------------------------------------------ runtime --
@@ -80,9 +89,9 @@ USER ${APP_USER}
 
 EXPOSE 8000
 
-# Healthcheck hits the readiness endpoint.
+# Healthcheck hits the liveness endpoint.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -fsS http://localhost:8000/health/live || exit 1
+    CMD curl -fsS http://localhost:8000/live || exit 1
 
 # tini is PID 1 so SIGTERM propagates cleanly to uvicorn.
 ENTRYPOINT ["/usr/bin/tini", "--"]

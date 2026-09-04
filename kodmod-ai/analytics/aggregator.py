@@ -222,7 +222,7 @@ class ClassroomAggregator:
         for r in roster_rows:
             per_student.append(
                 await StudentAggregator().summarise(
-                    student_id=uuid.UUID(r["id"]),
+                    student_id=uuid.UUID(str(r["id"])),
                     window=window,
                     include_recommendations=False,
                 )

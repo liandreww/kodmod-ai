@@ -28,6 +28,7 @@ _VOLATILE = [
     "analytics_reports",
     "curriculum_chunks",
     "exercises",
+    "classroom_enrollment",
     "students",
     "teachers",
     "classrooms",

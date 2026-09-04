@@ -20,9 +20,6 @@ pytestmark = [pytest.mark.e2e, pytest.mark.asyncio(loop_scope="session"), pytest
 # --------------------------------------------------------------------------- #
 # KM-E2E-001 — onboarding + tutoring
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#1 — POST /voice/text does student.profile -> 500; blocks the whole journey"
-)
 async def test_km_e2e_001_onboarding_tutoring(client, auth_headers) -> None:  # type: ignore[no-untyped-def]
     create = await client.post(
         "/student", json={"full_name": "Onboarding E2E", "preferred_language": "id"}
@@ -50,9 +47,6 @@ async def test_km_e2e_001_onboarding_tutoring(client, auth_headers) -> None:  # 
 # --------------------------------------------------------------------------- #
 # KM-E2E-002 — full quiz cycle  (the "siap dipakai" milestone)
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#1 / #5 / #6 / #11 — quiz start/submit and the answer->score path are broken"
-)
 async def test_km_e2e_002_full_quiz_cycle(
     client, student_factory, concept_ids, auth_headers
 ) -> None:  # type: ignore[no-untyped-def]
@@ -132,9 +126,6 @@ async def test_km_e2e_004_classroom_alerts(client, teacher_factory, auth_headers
 # --------------------------------------------------------------------------- #
 # KM-E2E-005 — RAG-grounded answer
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#1 — the answer step goes through /voice/text which 500s on student.profile"
-)
 async def test_km_e2e_005_rag_grounded(client, student_factory, concept_ids, auth_headers) -> None:  # type: ignore[no-untyped-def]
     sid, tok = await student_factory()
     hdr = auth_headers(tok)

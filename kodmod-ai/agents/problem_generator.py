@@ -84,7 +84,8 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
     topic = (state.get("current_topic") or "").strip() or concept_id
     difficulty: DifficultyLevel = state.get("current_difficulty", "medium")
     mastery = state.get("mastery_scores", {})
-    n_questions = _decide_n_questions(state)
+    requested_n = int(state.get("quiz_n_questions") or 0)
+    n_questions = requested_n if requested_n >= 1 else _decide_n_questions(state)
 
     # ---- Pull curriculum context from the Content cluster (RAG) ---------
     rag = RAGTool()
@@ -127,6 +128,11 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
         log.error("Problem generator JSON parse failed")
         parsed = {"questions": []}
 
+    # Prefer the real curriculum id from state — the LLM's free-text
+    # `concept_id` ("pecahan") is not a UUID and would break mastery
+    # persistence downstream (`CAST(:cid AS uuid)`).
+    resolved_cid = state.get("current_concept_id") or concept_id
+
     questions: list[QuizQuestion] = []
     for q in parsed.get("questions", []):
         questions.append(
@@ -137,21 +143,50 @@ async def problem_generator_node(state: KODMODState) -> dict[str, Any]:
                 options=q.get("options", []),
                 expected_answer=q.get("expected_answer", ""),
                 rubric=q.get("rubric", {}),
-                concept_id=q.get("concept_id", concept_id),
+                concept_id=resolved_cid,
                 difficulty=q.get("difficulty", difficulty),
             )
         )
 
     if not questions:
         log.warning("No questions produced; emitting one fallback")
-        questions = [_fallback_question(concept_id, difficulty)]
+        questions = [_fallback_question(resolved_cid, difficulty)]
 
-    log.info("Problem generator produced %d questions on concept=%s", len(questions), concept_id)
+    # Pad with open-ended fallbacks if the model under-delivered (it is prompted
+    # for `n_questions`). When the caller asked for an explicit length, honour it
+    # verbatim; otherwise a quiz is at least 3 questions.
+    target_n = n_questions if requested_n >= 1 else max(n_questions, 3)
+    questions = questions[:target_n]
+    while len(questions) < target_n:
+        questions.append(_fallback_question(resolved_cid, difficulty))
+
+    log.info("Problem generator produced %d questions on concept=%s", len(questions), resolved_cid)
+
+    quiz_session_id = f"quiz-{uuid4().hex[:10]}"
+    session_id = state.get("session_id")
+    if session_id:
+        try:
+            from memory.short_term import store_quiz_session
+
+            await store_quiz_session(
+                session_id,
+                {
+                    "quiz_session_id": quiz_session_id,
+                    "quiz_questions": questions,
+                    "current_question_index": 0,
+                    "quiz_question": questions[0],
+                    "quiz_attempts": [],
+                    "cumulative_quiz_score": 0.0,
+                },
+            )
+        except Exception:  # pragma: no cover - Redis best-effort
+            log.warning("Could not persist quiz session to short-term memory", exc_info=True)
 
     return {
-        "quiz_session_id": f"quiz-{uuid4().hex[:10]}",
+        "quiz_session_id": quiz_session_id,
         "quiz_questions": questions,
         "current_question_index": 0,
+        "quiz_question": questions[0],
         "quiz_attempts": [],
         "cumulative_quiz_score": 0.0,
         "next_action": "ask_question",

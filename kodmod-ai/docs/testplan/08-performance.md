@@ -11,11 +11,12 @@ Regresi > 25 % terhadap baseline → gagal di Stage 10.
 framework / graph / DB / checkpointer / serialisasi**, **bukan** latency model. Latency nyata
 model di luar lingkup (lihat README §1.2).
 
-**Framework.** `locust` (skenario HTTP/WS), `pytest-benchmark` (micro), `docker stats` /
-`psutil` (resource), `psql` (koneksi & lock).
+**Framework.** `locust` (skenario HTTP/WS, dari kontainer → `host.docker.internal:8000`),
+`pytest-benchmark` (micro), `psutil` (RSS proses `api` host), `psql` (koneksi & lock).
 
-**Entry.** Stage 7 hijau, stack `--profile load` up. **Exit.** Semua skenario menghasilkan
-laporan di `docs/testplan/baselines/`; tidak ada kebocoran pada soak 30 menit.
+**Entry.** Stage 7 hijau; infra + proses `api` host up di `:8000`; `--profile load up -d locust`.
+**Exit.** Semua skenario menghasilkan laporan di `docs/testplan/baselines/`; tidak ada
+kebocoran pada soak 30 menit.
 
 **Lokasi.** `tests/performance/` (`locustfile.py`, `benchmarks/`). **Marker.** `perf`, `slow`.
 
@@ -23,7 +24,8 @@ laporan di `docs/testplan/baselines/`; tidak ada kebocoran pada soak 30 menit.
 
 ## 1. Skenario beban HTTP (Locust)
 
-Target: `http://api:8000` (dari kontainer `locust`) atau `http://localhost:8000`.
+Target: `http://host.docker.internal:8000` (dari kontainer `locust`) atau `http://localhost:8000`
+(pytest-benchmark / micro di host). `api` = proses host `scripts/serve_test_api`.
 
 | ID | Skenario | Beban | Metrik & SLO awal (dgn stub) | Bug ref |
 |---|---|---|---|---|
@@ -39,7 +41,7 @@ Target: `http://api:8000` (dari kontainer `locust`) atau `http://localhost:8000`
 |---|---|---|---|---|
 | KM-PERF-010 | Saturasi connection pool | naikkan konkurensi bertahap; pantau `pg_stat_activity` & error `QueuePool`/`asyncpg` timeout | laporkan titik knee (VU saat error mulai); `DB_POOL_SIZE=10` + `max_overflow=20` → ~30 koneksi paralel batas teoretis | `database/session.py` |
 | KM-PERF-011 | Checkpointer write amplification | 1 turn tutoring = jalur 6 node → ukur jumlah `INSERT` ke tabel checkpoint via `pg_stat_statements` | dokumentasikan write/turn; cari TPS maksimum sebelum lag; bandingkan dengan `checkpointer=None` (turunkan flag di build khusus) | LangGraph checkpoint after every node |
-| KM-PERF-012 | Memori kontainer `api` di beban | `docker stats` selama KM-PERF-005 | RSS stabil (naik lalu plateau), tidak monoton naik | — |
+| KM-PERF-012 | Memori proses `api` host di beban | `psutil` RSS dari PID `reports/.api.pid` sampel selama KM-PERF-005 | RSS stabil (naik lalu plateau), tidak monoton naik | — |
 | KM-PERF-013 | Redis throughput | beban dgn banyak `append_tutoring_turn`/`set_pacing` | Redis `INFO` ops/sec; latency < 5 ms p99 | `memory/short_term.py` |
 | KM-PERF-014 | CPU profil node | jalankan `py-spy dump`/`cProfile` sampel saat beban | node/pemakaian teratas terdokumentasi (kandidat optimasi) | — |
 

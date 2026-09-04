@@ -2,11 +2,13 @@
 # =============================================================================
 # KODMOD AI — ordered test pipeline (Stage 0 -> 10).
 #
-# kodmod-ai runs entirely in Docker (docker/docker-compose.test.yml: postgres,
-# redis, llm-stub, api). This SCRIPT runs natively on the host (bash/CI) — it
-# never runs pytest inside a container. It only uses `docker compose` to bring
-# up the service containers that Stage 3+ talk to over the network. On
-# Windows, prefer scripts/run_tests.ps1 in PowerShell.
+# Only the test INFRA runs in Docker (docker/docker-compose.test.yml: postgres,
+# redis, llm-stub, [qdrant]). The `db-init` step and the `api` server run
+# natively on the host — schema+seed via scripts/create_test_db +
+# scripts/seed_curriculum, the API via scripts/serve_test_api — so a code
+# change is picked up by a plain restart, no `docker build`. This SCRIPT runs
+# natively too and never runs pytest inside a container. On Windows, prefer
+# scripts/run_tests.ps1 in PowerShell.
 #
 # Runs each stage in dependency order and STOPS at the first RED stage so bugs
 # can be fixed iteratively. See docs/testplan/README.md section 3.
@@ -32,8 +34,10 @@ cd "$(dirname "$0")/.."
 
 COMPOSE_TEST=${COMPOSE_TEST:-docker compose -p kodmod-test -f docker/docker-compose.test.yml}
 PYTEST=${PYTEST:-python -m pytest}
+PYBIN=${PYBIN:-python}
 REPORTS=reports
 mkdir -p "$REPORTS"
+API_PID=""
 
 FROM=0
 ONLY=""
@@ -77,21 +81,45 @@ run_stage() {  # run_stage <num> <label> <command...>
   fi
 }
 
-compose_up_infra() {  # postgres + redis + llm-stub + schema/seed (Stage 3)
-  [ "$USE_COMPOSE" -eq 1 ] || return 0
-  $COMPOSE_TEST up -d postgres redis llm-stub
-  $COMPOSE_TEST up --no-deps db-init
+stop_host_api() {  # kill the host uvicorn started by compose_up_api, if any
+  local pid="$API_PID"
+  [ -z "$pid" ] && [ -f "$REPORTS/.api.pid" ] && pid=$(cat "$REPORTS/.api.pid" 2>/dev/null)
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  API_PID=""
+  rm -f "$REPORTS/.api.pid"
+}
+trap stop_host_api EXIT
+
+compose_up_infra() {  # postgres + redis + llm-stub (Docker) + schema/seed (host) — Stage 3
+  if [ "$USE_COMPOSE" -eq 1 ]; then
+    $COMPOSE_TEST up -d postgres redis llm-stub
+  fi
+  $PYBIN -m scripts.init_test_db
 }
 
-compose_up_api() {  # + the real backend, built from docker/Dockerfile (Stage 4+)
-  [ "$USE_COMPOSE" -eq 1 ] || return 0
-  $COMPOSE_TEST up -d --build api
+compose_up_api() {  # + the backend, run natively on the host (Stage 4+)
+  # $1 (optional) = KODMOD_CHECKPOINTER for the server ("memory" for Stage 8,
+  # where the Postgres saver's global lock would serialise every graph turn).
+  # When set we always start a fresh server; otherwise we reuse a healthy one.
+  compose_up_infra || return 1
+  local want_cp="${1:-}"
+  if [ -z "$want_cp" ] && curl -fsS http://localhost:8000/live >/dev/null 2>&1; then
+    return 0  # reuse a healthy server (e.g. --no-compose, or a dev-run server)
+  fi
+  stop_host_api
+  # Never inherit reload for perf/e2e — watchfiles churn thrashes concurrency.
+  unset SERVE_TEST_API_RELOAD
+  KODMOD_CHECKPOINTER="${want_cp:-postgres}" \
+    $PYBIN -m scripts.serve_test_api >"$REPORTS/api.log" 2>&1 &
+  API_PID=$!
+  echo "$API_PID" > "$REPORTS/.api.pid"
   echo "waiting for api on http://localhost:8000/live ..."
   for _ in $(seq 1 30); do
     curl -fsS http://localhost:8000/live >/dev/null 2>&1 && return 0
+    kill -0 "$API_PID" 2>/dev/null || { c_red "serve_test_api exited early — see $REPORTS/api.log"; return 1; }
     sleep 2
   done
-  c_red "api did not become healthy — see: $COMPOSE_TEST logs api"
+  c_red "api did not become healthy — see $REPORTS/api.log"
   return 1
 }
 
@@ -124,8 +152,8 @@ stage6() { compose_up_api && $PYTEST -q -m "e2e $NOT_KNOWN_BUG" --junitxml="$REP
 stage7() { compose_up_api && $PYTEST -q -m "system $NOT_KNOWN_BUG" --junitxml="$REPORTS/junit-system.xml"; }
 
 stage8() {  # non-blocking: record baselines, never fail the pipeline
-  compose_up_api || return 0
-  [ "$USE_COMPOSE" -eq 1 ] && $COMPOSE_TEST --profile load up -d --build
+  compose_up_api memory || return 0
+  [ "$USE_COMPOSE" -eq 1 ] && $COMPOSE_TEST --profile load up -d locust
   $PYTEST -q -m "perf $NOT_KNOWN_BUG" --junitxml="$REPORTS/junit-perf.xml" \
     --benchmark-json="docs/testplan/baselines/bench.json" || \
     c_red "Stage 8 had failures (non-blocking) — see reports/junit-perf.xml"
@@ -143,10 +171,12 @@ burndown() {  # non-blocking: how many tracked bugs are still open (RED)
 
 gate() {
   c_hdr "Stage 10 — Release Readiness Gate"
-  python scripts/readiness_gate.py 2>/dev/null || {
-    echo "readiness_gate.py not implemented yet — see docs/testplan/10-readiness.md"
-    return 0
-  }
+  # Repo-inspection meta-checks (traceability, docs, migration policy, marker
+  # hygiene) — no service needed. Non-blocking here; the gate script folds the
+  # result in via reports/junit-readiness.xml.
+  $PYTEST -q -m "readiness $NOT_KNOWN_BUG" --junitxml="$REPORTS/junit-readiness.xml" || \
+    c_red "Stage 10 readiness meta-checks had failures — see reports/junit-readiness.xml"
+  python scripts/readiness_gate.py || return 1
 }
 
 # ------------------------------------------------------------------- main -----
@@ -167,8 +197,10 @@ run_stage 7 "System (black-box)"    stage7
 run_stage 8 "Performance / Load"    stage8
 run_stage 9 "Security (dynamic)"    stage9
 
-if [ "$GATE_ONLY" -eq 1 ] || { [ -z "$ONLY" ] && [ "$FROM" -le 9 ]; }; then
-  gate
+if [ "$GATE_ONLY" -eq 1 ]; then
+  gate || exit 1
+elif [ -z "$ONLY" ] && [ "$FROM" -le 9 ]; then
+  gate || true   # full-pipeline run: report the gate, don't mask an earlier green
 fi
 
 # Always show what's left on the bug backlog (never fails the pipeline).

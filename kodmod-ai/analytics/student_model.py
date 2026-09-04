@@ -174,8 +174,31 @@ async def update_student_model_node(state) -> dict[str, Any]:
 
     await model.persist()
 
-    # Advance the question index
+    # Advance the question index and mirror the progress into short-term
+    # memory so the next utterance re-enters the graph on the right question.
     new_index = state.get("current_question_index", 0) + 1
+    session_id = state.get("session_id")
+    if session_id:
+        try:
+            from memory.short_term import clear_quiz_session, store_quiz_session
+
+            if new_index >= len(questions):
+                await clear_quiz_session(session_id)
+            else:
+                await store_quiz_session(
+                    session_id,
+                    {
+                        "quiz_session_id": state.get("quiz_session_id", ""),
+                        "quiz_questions": questions,
+                        "current_question_index": new_index,
+                        "quiz_question": questions[new_index],
+                        "quiz_attempts": attempts,
+                        "cumulative_quiz_score": state.get("cumulative_quiz_score", 0.0),
+                    },
+                )
+        except Exception:  # pragma: no cover - Redis best-effort
+            log.warning("Could not update quiz session in short-term memory", exc_info=True)
+
     return {
         "mastery_scores": await model.mastery_scores(),
         "current_question_index": new_index,

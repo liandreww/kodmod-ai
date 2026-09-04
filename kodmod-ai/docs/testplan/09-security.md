@@ -9,12 +9,12 @@ detect-secrets, Trivy, gitleaks) sudah wajib di [Stage 0](00-static.md).
 
 **Sifat gate.** Blok. 0 temuan High/Critical tanpa *waiver* bertanggal. 3–8 menit.
 
-**Framework.** `pytest` (native di host) + `httpx` terhadap kontainer `api` sungguhan
-(`docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api` — sudah
-bagian dari stack default, tanpa profile khusus), `PyJWT` untuk merakit token jahat,
-`schemathesis` mode negatif/stateful, skrip payload injeksi.
+**Framework.** `pytest` (native di host) + `httpx` terhadap proses `api` host sungguhan
+(infra `docker compose ... up -d postgres redis llm-stub` → `python -m scripts.init_test_db`
+→ `python -m scripts.serve_test_api`), `PyJWT` untuk
+merakit token jahat, `schemathesis` mode negatif/stateful, skrip payload injeksi.
 
-**Entry.** Stage 7 hijau; container `api` up dan `/live` 200. **Exit.** Semua kontrol
+**Entry.** Stage 7 hijau; proses `api` host up dan `/live` 200. **Exit.** Semua kontrol
 keamanan hijau kecuali `xfail(strict)` yang tercatat (SSRF guard, rate-limit middleware,
 endpoint tanpa-auth) — masing-masing wajib punya isu perbaikan.
 

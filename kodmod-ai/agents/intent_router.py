@@ -69,28 +69,67 @@ async def intent_router_node(state: KODMODState) -> dict:
     """LangGraph node — runs after STT, before any cluster logic."""
     text = state.get("transcribed_text") or state.get("user_input", "")
     if not text.strip():
+        # No utterance to classify (e.g. a REST entrypoint that drives the graph
+        # directly). Honour a concrete intent the caller already set instead of
+        # clobbering it with "unknown".
+        preset = state.get("intent") or "unknown"
         return {
-            "intent": "unknown",
-            "intent_confidence": 0.0,
+            "intent": preset,
+            "intent_confidence": 0.0 if preset == "unknown" else 0.9,
             "next_action": "route_intent",
             "last_node": "intent_router",
         }
 
-    # --- Hard short-circuit: if we're mid-quiz, the utterance IS the answer
+    # --- Hard short-circuit: if we're mid-quiz, the utterance IS the answer.
+    # The graph re-enters at `stt` with a fresh state every turn, so the quiz
+    # progress may only exist in short-term memory — rehydrate it here.
+    quiz_session_id = state.get("quiz_session_id")
+    quiz_questions = state.get("quiz_questions") or []
+    question_index = state.get("current_question_index", 0)
+    quiz_attempts = state.get("quiz_attempts", [])
+    cumulative_quiz_score = state.get("cumulative_quiz_score", 0.0)
+    rehydrated = False
+
+    session_id = state.get("session_id")
+    if not quiz_questions and session_id:
+        try:
+            from memory.short_term import fetch_quiz_session
+
+            sess = await fetch_quiz_session(session_id)
+        except Exception:  # pragma: no cover - Redis best-effort
+            sess = None
+        if sess and sess.get("current_question_index", 0) < len(sess.get("quiz_questions", [])):
+            quiz_session_id = sess.get("quiz_session_id", "")
+            quiz_questions = sess.get("quiz_questions", [])
+            question_index = sess.get("current_question_index", 0)
+            quiz_attempts = sess.get("quiz_attempts", [])
+            cumulative_quiz_score = sess.get("cumulative_quiz_score", 0.0)
+            rehydrated = True
+
     quiz_in_progress = bool(
-        state.get("quiz_session_id")
-        and state.get("quiz_questions")
-        and state.get("current_question_index", 0) < len(state.get("quiz_questions", []))
+        quiz_session_id and quiz_questions and question_index < len(quiz_questions)
     )
     if quiz_in_progress and not _is_meta_command(text):
         log.info("Mid-quiz utterance detected; forcing intent=quiz")
-        return {
+        out: dict = {
             "intent": "quiz",
             "intent_confidence": 0.95,
             "student_answer": text,
             "next_action": "score_answer",
             "last_node": "intent_router",
         }
+        if rehydrated:
+            out.update(
+                {
+                    "quiz_session_id": quiz_session_id,
+                    "quiz_questions": quiz_questions,
+                    "current_question_index": question_index,
+                    "quiz_question": quiz_questions[question_index],
+                    "quiz_attempts": quiz_attempts,
+                    "cumulative_quiz_score": cumulative_quiz_score,
+                }
+            )
+        return out
 
     # --- LLM classification
     llm = get_router_llm()

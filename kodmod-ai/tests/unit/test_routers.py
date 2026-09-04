@@ -55,12 +55,15 @@ def test_route_after_scoring_pass(score: float) -> None:  # KM-UNIT-064
 
 
 def test_route_after_analyzer_more_questions_left() -> None:  # KM-UNIT-065
-    state = {"quiz_questions": [{}, {}, {}], "current_question_index": 0}
-    assert route_after_analyzer(state) == "quiz_ask"
+    # `current_question_index` has already been advanced by update_student_model;
+    # it still points at a valid question → end this turn (next question is asked
+    # when the student's following utterance re-enters the graph).
+    state = {"quiz_questions": [{}, {}, {}], "current_question_index": 1}
+    assert route_after_analyzer(state) == "end"
 
 
 def test_route_after_analyzer_questions_exhausted() -> None:  # KM-UNIT-066
-    state = {"quiz_questions": [{}, {}], "current_question_index": 1}
+    state = {"quiz_questions": [{}, {}], "current_question_index": 2}
     assert route_after_analyzer(state) == "analytics"
 
 

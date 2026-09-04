@@ -163,6 +163,7 @@ class KODMODState(TypedDict, total=False):
 
     # ---- Quiz state --------------------------------------------------------
     quiz_session_id: str
+    quiz_n_questions: int  # explicit length request (0 = let the agent decide)
     quiz_questions: list[QuizQuestion]
     current_question_index: int
     quiz_question: QuizQuestion  # the question currently being asked
@@ -247,6 +248,7 @@ def initial_state(
         generated_response="",
         accessible_response="",
         quiz_session_id="",
+        quiz_n_questions=0,
         quiz_questions=[],
         current_question_index=0,
         quiz_question={},

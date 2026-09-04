@@ -1,0 +1,11 @@
+{
+  "mixed_error_rate": 0.0,
+  "mixed_mean_ms": 1316.1,
+  "mixed_n": 60,
+  "mixed_p50_ms": 1386.4,
+  "mixed_p95_ms": 1748.9,
+  "mixed_status_counts": {
+    "200": 60
+  },
+  "recorded_at": "2026-09-03T01:00:45Z"
+}

@@ -113,3 +113,40 @@ async def delete_by_source(source: str) -> int:
     )
     # Qdrant doesn't return a count; we return -1 to signal "unknown".
     return -1 if res else 0
+
+
+class QdrantStore:
+    """Thin object wrapper over the module-level functions above.
+
+    Mirrors ``rag.stores.pgvector_store.PgVectorStore`` so ``RAGTool`` (and other
+    callers) can treat either backend the same way. New code should call the
+    module functions directly.
+    """
+
+    async def similarity_search(
+        self,
+        *,
+        embedding: list[float],
+        top_k: int = 8,
+        filters: dict | None = None,
+    ) -> list[dict]:
+        filters = filters or {}
+        raw_cid = filters.get("concept_id")
+        concept_id: uuid.UUID | None = None
+        if raw_cid:
+            try:
+                concept_id = raw_cid if isinstance(raw_cid, uuid.UUID) else uuid.UUID(str(raw_cid))
+            except (ValueError, TypeError):
+                concept_id = None
+        return await query(
+            embedding,
+            top_k=top_k,
+            concept_id=concept_id,
+            language=filters.get("language"),
+        )
+
+    async def upsert_chunks(self, records: list[dict]) -> int:
+        return await upsert_chunks(records)
+
+    async def delete_by_source(self, source: str) -> int:
+        return await delete_by_source(source)

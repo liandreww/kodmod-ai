@@ -1,4 +1,4 @@
-"""Stage 6 (E2E) fixtures — real HTTP journeys against the containerized api."""
+"""Stage 6 (E2E) fixtures — real HTTP journeys against the host ``api`` process."""
 
 from __future__ import annotations
 

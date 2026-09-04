@@ -59,6 +59,7 @@ async def generate_exercises(
 async def exercises_by_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
+    _student: Student = Depends(current_student),
 ) -> list[Exercise]:
     """List the audio-friendly teacher-authored exercises for a concept."""
     rows = (

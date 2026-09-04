@@ -142,6 +142,7 @@ markers = [
   "system: black-box compose stack (Stage 7)",
   "perf: performance / load (Stage 8)",
   "security: dynamic security (Stage 9)",
+  "readiness: release-readiness gate meta-checks (Stage 10) — traceability, docs, migration policy",
   "real_llm: hits a real LLM provider; skipped unless KODMOD_RUN_REAL_LLM=1",
   "slow: takes more than a few seconds",
   "db: needs Postgres",

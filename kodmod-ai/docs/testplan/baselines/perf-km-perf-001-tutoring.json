@@ -1,0 +1,11 @@
+{
+  "recorded_at": "2026-09-03T01:00:29Z",
+  "tutoring_error_rate": 0.0,
+  "tutoring_mean_ms": 1884.7,
+  "tutoring_n": 60,
+  "tutoring_p50_ms": 1679.1,
+  "tutoring_p95_ms": 2455.0,
+  "tutoring_status_counts": {
+    "200": 60
+  }
+}

@@ -1,23 +1,27 @@
 # =============================================================================
-# KODMOD AI — Single test Docker Compose project  (project name: kodmod-test)
+# KODMOD AI — test infra Docker Compose project  (project name: kodmod-test)
 # =============================================================================
-# This compose file runs the WHOLE kodmod-ai application stack in Docker —
-# Postgres+pgvector, Redis, (Qdrant), a deterministic LLM/embedding stub, and
-# the real backend `api` image built from docker/Dockerfile. That is the
-# system under test.
+# This compose file brings up only the STATEFUL INFRA the test suite needs —
+# Postgres+pgvector, Redis, a deterministic LLM/embedding stub, and (opt-in)
+# Qdrant. None of these images carry application source, so they never need a
+# rebuild when the code changes.
 #
-# Test SCRIPTS are NOT run inside a container. Run pytest / locust natively
-# from the host (PowerShell or bash) — see scripts/run_tests.ps1 (Windows) or
-# scripts/run_tests.sh (bash/CI). Host-side pytest talks to these containers
-# over the ports mapped below (Postgres, Redis directly for Stage 1/3;
-# the `api` container over real HTTP/WS for Stage 4-9 — see docs/testplan/).
+# The backend itself is NOT in this file. `db-init` (schema + seed) and the
+# `api` server run NATIVELY ON THE HOST so a source change is picked up by a
+# plain restart, no `docker build`:
 #
 #   Run from kodmod-ai/ :
 #
-#   # bring up the whole app stack (postgres, redis, llm-stub, db-init, api)
-#   docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+#   # 1. infra
+#   docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d postgres redis llm-stub
 #
-#   # then, natively on the host:
+#   # 2. schema + seed, on the host (locks the test env: DB kodmod_test, not .env's kodmod)
+#   python -m scripts.init_test_db
+#
+#   # 3. the API, on the host (Stage 4+); run_tests.{ps1,sh} do this for you
+#   python -m scripts.serve_test_api          # -> http://localhost:8000
+#
+#   # 4. tests, on the host
 #   pip install -e ".[test]"
 #   pwsh scripts/run_tests.ps1        # Windows
 #   bash scripts/run_tests.sh         # bash / CI
@@ -25,8 +29,8 @@
 #   # qdrant backend matrix (Stage 7 only)
 #   docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile qdrant up -d
 #
-#   # load (Stage 8)
-#   docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile load up -d
+#   # load (Stage 8) — needs the host api on :8000 first
+#   docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile load up -d locust
 #
 #   Reset:  docker compose -p kodmod-test -f docker/docker-compose.test.yml down -v
 #
@@ -37,28 +41,6 @@
 # expect DB "kodmod" on host port 5433:  override with
 #   POSTGRES_DB=kodmod DB_HOST_PORT=5433 docker compose ... up -d postgres
 # =============================================================================
-
-x-app-env: &app-env
-  ENV: test
-  DEBUG: "false"
-  LOG_JSON: "true"
-  DB_HOST: postgres
-  DB_PORT: "5432"
-  DB_USER: kodmod
-  DB_PASSWORD: kodmod
-  DB_NAME: ${POSTGRES_DB:-kodmod_test}
-  REDIS_HOST: redis
-  REDIS_PORT: "6379"
-  REDIS_DB: "0"
-  EMBEDDING_DIM: "1024"
-  VECTOR_BACKEND: ${VECTOR_BACKEND:-pgvector}
-  QDRANT_URL: http://qdrant:6333
-  STT_ENABLED: "false"
-  TTS_ENABLED: "false"
-  AUDIO_DIR: /tmp/kodmod/audio
-  UPLOAD_DIR: /tmp/kodmod/uploads
-  LANGCHAIN_TRACING_V2: "false"
-  JWT_SECRET: ${JWT_SECRET:-test-secret-not-for-prod-0123456789abcdef}
 
 services:
   # --------------------------------------------------------------- Postgres --
@@ -107,9 +89,9 @@ services:
 
   # ---------------------------------------------------------------- LLM stub --
   # OpenAI-compatible fake: deterministic chat completions + 1024-dim embeddings.
-  # The `api` container always talks to this (KODMOD_LLM_PROVIDER=vllm + *_BASE_URL)
-  # instead of a real provider. Host-side pytest for Stage 1/3 (no `api` container
-  # involved) stubs the LLM in Python instead — see tests/_fakes/.
+  # The host `api` talks to this (KODMOD_LLM_PROVIDER=vllm + *_BASE_URL pointed
+  # at http://localhost:8099/v1 by scripts/serve_test_api). Host-side pytest for
+  # Stage 1/3 (no `api` involved) stubs the LLM in Python instead — tests/_fakes/.
   llm-stub:
     build:
       context: ./llm_stub
@@ -125,81 +107,22 @@ services:
       timeout: 5s
       retries: 15
 
-  # ---------------------------------------------------------------- db-init --
-  # One-shot: create ORM schema + curriculum_chunks DDL, then seed curriculum.
-  # Owns the ONLY `build:` for docker/Dockerfile in this file — `api` below
-  # just references the resulting `image:` tag so compose builds it once and
-  # reuses it, instead of building the same Dockerfile twice (which could race
-  # and double-download deps if compose happens to build both in parallel).
-  db-init:
-    image: kodmod-api:test
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: kodmod-dbinit-test
-    environment:
-      <<: *app-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-    command: >
-      bash -c "python -m scripts.create_test_db && python -m scripts.seed_curriculum"
-
-  # -------------------------------------------------------------------- api --
-  # The real backend, built from the same docker/Dockerfile used for prod.
-  # Part of the DEFAULT stack — Stage 4 (API) onward test it over real HTTP/WS
-  # from the host, so it must be up for every stage from Stage 4 on.
-  #
-  # LLM/embedding default to the deterministic llm-stub. For the opt-in
-  # `@real_llm` E2E smoke (docs/testplan/06-e2e.md), set real values in the
-  # shell BEFORE `docker compose up -d --build api`, e.g.:
-  #   KODMOD_LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... \
-  #     docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
-  api:
-    image: kodmod-api:test   # built by db-init above — no separate `build:` here
-    pull_policy: never       # never on a registry; only ever produced locally
-    container_name: kodmod-api-test
-    environment:
-      <<: *app-env
-      KODMOD_LLM_PROVIDER: ${KODMOD_LLM_PROVIDER:-vllm}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      VLLM_BASE_URL: http://llm-stub:8000/v1
-      KODMOD_EMBED_BACKEND: ${KODMOD_EMBED_BACKEND:-openai}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://llm-stub:8000/v1}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-stub-key}
-      KODMOD_EMBED_MODEL: ${KODMOD_EMBED_MODEL:-text-embedding-3-small}
-    depends_on:
-      db-init:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      llm-stub:
-        condition: service_healthy
-    ports:
-      - "${API_HOST_PORT:-8000}:8000"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/live"]
-      interval: 10s
-      timeout: 5s
-      start_period: 20s
-      retries: 10
-
   # ---------------------------------------------------------------- locust --
+  # Load driver (Stage 8). The `api` under test runs on the host, so target it
+  # through the docker host gateway. Bring the host api up on :8000 first.
   locust:
     image: locustio/locust:2.31.8
     container_name: kodmod-locust-test
     profiles: ["load"]
-    depends_on:
-      api:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${LOCUST_HOST_PORT:-8089}:8089"
     volumes:
       - ../tests/performance:/mnt/locust
     command: >
       -f /mnt/locust/locustfile.py
-      --host http://api:8000
+      --host http://host.docker.internal:8000
 
 volumes:
   kodmod-pgtestdata:

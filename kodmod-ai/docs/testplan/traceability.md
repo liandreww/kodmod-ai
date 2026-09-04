@@ -41,6 +41,18 @@ Legenda stage: 0=static 1=unit 2=contract 3=integration 4=api 5=ws 6=e2e 7=syste
   di-*waive* bertanggal di `.pip-audit-ignore` — masuk hanya via JupyterLab lokal,
   bukan `requirements.txt`/image. Tinjau ulang di Stage 10.
 
+### Catatan run Stage 5 (2026-09-02)
+
+- **#WS-AUTH** (`voice_ws` memanggil `authenticate_ws(websocket)` sebagai fungsi biasa,
+  bukan `Depends`, sehingga `token: str | None = Query(default=None)` tak pernah di-resolve →
+  setiap handshake 401) **beres**: `authenticate_ws` kini membaca `?token=`/header sendiri.
+  Bersama #17/#21/#4 dan resume graph melewati `interrupt_after=["reflection"]`, seluruh
+  `pytest -m ws` hijau (19 passed) kecuali **KM-WS-022 `skip`** — setelah perbaikan tak ada
+  jalur 1011 yang bisa dipicu klien (non-JSON diabaikan per KM-WS-024; frame besar close 1009
+  per KM-WS-040; graph stub selalu selesai). Ketahanan error internal tercakup
+  KM-WS-020/021/024/040. `tests/ws/` tak lagi punya test `known_bug`.
+- Setting baru `WS_MAX_FRAME_BYTES` (default 1 MiB) — batas per-frame masuk di `/ws/voice`.
+
 ## B. Temuan eksplorasi (#1..#20)
 
 | # | Deskripsi | Test ID | Stage | Target rilis | Isu perbaikan |
@@ -61,11 +73,11 @@ Legenda stage: 0=static 1=unit 2=contract 3=integration 4=api 5=ws 6=e2e 7=syste
 | #14 | Tanpa auth: `POST /student`, `GET /student/{id}/profile`, semua `/content/*`, `GET /exercise/by-concept/{id}`, `/metrics` | KM-API-030, KM-SEC-010, KM-SEC-013, KM-SEC-062, KM-SYS-031 | 4,7,9 | ✅ (auth atau allowlist sadar) | — |
 | #15 | `.env` on-disk berisi `OPENAI_API_KEY`+`JWT_SECRET` asli; model `gpt-5.6-luna` tak terverifikasi; `EMBEDDING_DIM=1536` vs `vector(1024)` | KM-STATIC-021, KM-STATIC-022, KM-SEC-014, KM-SEC-070..072, KM-SYS-041 | 0,7,9 | ✅ (rotasi) | — |
 | #16 | `_decode_jwt` → `uuid.UUID(sub)` tak dijaga → `ValueError`/500; tanpa `aud`/`iss`/`nbf` | KM-API-013, KM-SEC-005, KM-SEC-006 | 4,9 | ✅ | — |
-| #17 | `authenticate_ws` hanya `?token=`, bukan header (docstring salah) | KM-WS-006 | 5 | ➖ (dok saja, keputusan sadar) | — |
+| #17 | `authenticate_ws` hanya `?token=`, bukan header (docstring salah) | KM-WS-006 | 5 | ✅ **FIXED** (2026-09-02) — `authenticate_ws` membaca `?token=` lalu fallback ke header `Authorization: Bearer`; docstring modul WS disamakan | — |
 | #18 | Test lama broken: `test_student_model.py` (signature usang), `test_graph_wiring.py` (tanpa `await`, `initial_state` kurang `session_id`) | KM-UNIT-020..030, KM-CONTRACT-030, KM-STATIC-051 | 0,1,2 | ✅ | — |
 | #19 | `voice/tts.py` `OUTPUT_DIR.mkdir()` saat import (kini di-try/except) | KM-STATIC-011, KM-INT-124 | 0,3 | ✅ | — |
 | #20 | `ClassroomAggregator` butuh `classroom_enrollment` (hanya di `schema.sql`, bukan ORM) | KM-INT-078, KM-INT-079, KM-API-094, KM-API-095, KM-E2E-004 | 3,4,6 | ✅ (tambah model ORM `ClassroomEnrollment` **atau** relasi ORM) | — |
-| #21 | `api/websockets/voice_stream.py` menginstansiasi `StreamingSTT` langsung, tidak memeriksa `settings.STT_ENABLED` (beda dari `stt_node`) — WS selalu mencoba STT audio nyata bahkan di text-mode; ditemukan saat mendesain pengujian WS black-box terhadap container `api` sungguhan | KM-WS-010, KM-WS-030, KM-WS-041 | 5 | ✅ (honor `STT_ENABLED`; terima field `transcript` opsional di frame `end_of_speech`) | — |
+| #21 | `api/websockets/voice_stream.py` menginstansiasi `StreamingSTT` langsung, tidak memeriksa `settings.STT_ENABLED` (beda dari `stt_node`) — WS selalu mencoba STT audio nyata bahkan di text-mode; ditemukan saat mendesain pengujian WS black-box terhadap proses `api` host sungguhan | KM-WS-010, KM-WS-030, KM-WS-041 | 5 | ✅ **FIXED** (2026-09-02) — `StreamingSTT` hanya dibangun saat `STT_ENABLED`; frame `end_of_speech` menerima field `transcript` opsional yang dipakai langsung; `_collect_utterance` juga: guard ukuran frame (`WS_MAX_FRAME_BYTES`→close 1009), abaikan teks non-JSON, unpack `feed()` sebagai dict. Plus `voice_ws` melanjutkan graph melewati `interrupt_after=["reflection"]` supaya `accessibility`/`tts` jalan. | — |
 | #22 | `database/session.py::_make_engine()` selalu mengirim `pool_size`/`max_overflow` ke `create_async_engine()` meski `poolclass=NullPool` dipasang saat `ENV=test` — `NullPool` tak mendukung parameter itu → `TypeError`, `init_db()` gagal total, memblokir SEMUA yang butuh DB (`db-init`, Stage 3+). Ditemukan saat menjalankan `db-init` sungguhan di container (`ENV=test`) — sebelumnya tak pernah tereksekusi end-to-end. **Sudah diperbaiki** (kirim `pool_size`/`max_overflow` hanya saat bukan `NullPool`) | KM-INT-001, KM-STATIC-045 (build & boot smoke) | 0, 3 | ✅ **FIXED** (lihat commit terkait) | — |
 | #23 | `agents/scoring_agent.py::_score_mcq` dengan `expected_answer` kosong: kondisi `s.endswith(e)` = `s.endswith("")` selalu `True` → mengembalikan `(1.0, "Benar.")` untuk jawaban apa pun alih-alih `(0.0, ...)` yang aman. Tak crash (bukan IndexError), tapi skor salah. Ditemukan saat menulis KM-UNIT-043. | KM-UNIT-043 | 1 | ✅ **FIXED** (Stage 1, 2026-09-02) — `if not e: return 0.0, "Belum tepat."` sebelum cek `endswith`. | — |
 
@@ -100,7 +112,7 @@ Legenda stage: 0=static 1=unit 2=contract 3=integration 4=api 5=ws 6=e2e 7=syste
 | RF-09 | Auth JWT: `current_student`/`current_teacher`; WS `?token=` | KM-API-010..021, KM-WS-001..006, KM-SEC-001..015 |
 | RF-10 | LLM via role getter; provider switch `anthropic/openai/ollama/vllm` | KM-UNIT-130..134, KM-STATIC-014 |
 | RF-11 | Config satu sumber (`settings`); import aman env bersih & `.env.example` | KM-STATIC-012..015 |
-| RF-12 | Jalankan penuh dalam satu Docker Compose project (termasuk DB) | KM-STATIC-040..044, KM-SYS-001..052 |
+| RF-12 | Infra (DB, Redis, llm-stub) di satu Docker Compose project `kodmod-test`; `db-init` & `api` reproducible di host (`scripts/create_test_db`, `scripts/seed_curriculum`, `scripts/serve_test_api`) | KM-STATIC-040..047, KM-SYS-001..004, KM-SYS-052 |
 
 ## E. Non-functional → Test ID
 

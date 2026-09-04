@@ -105,6 +105,10 @@ class _PrettyFormatter(logging.Formatter):
 def configure_logging(level: str | None = None) -> None:
     """Idempotent — safe to call from main, tests, or Celery workers."""
     root = logging.getLogger()
+    # Keep any file handler a launcher already attached (e.g. uvicorn's
+    # --log-config in scripts/serve_test_api) so app-lifecycle logs still reach
+    # reports/api.log — and get flushed on every emit — after we take over root.
+    preserved = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
     root.handlers.clear()
 
     handler = logging.StreamHandler(sys.stdout)
@@ -114,6 +118,8 @@ def configure_logging(level: str | None = None) -> None:
         handler.setFormatter(_PrettyFormatter())
 
     root.addHandler(handler)
+    for h in preserved:
+        root.addHandler(h)
     root.setLevel(level or settings.LOG_LEVEL)
 
     # Tame noisy libraries.

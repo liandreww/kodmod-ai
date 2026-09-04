@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     AUDIO_DIR: Path = Path("/var/lib/kodmod/audio")
     UPLOAD_DIR: Path = Path("/var/lib/kodmod/uploads")
     MAX_AUDIO_SECONDS: int = 120
+    WS_MAX_FRAME_BYTES: int = 1_048_576  # per-frame inbound cap on the /ws/voice socket
 
     # --------------------------------------------------------- observability
     LANGSMITH_API_KEY: str | None = None

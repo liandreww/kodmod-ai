@@ -88,7 +88,9 @@ async def accessibility_node(state: KODMODState) -> dict[str, Any]:
             target_grade_level=str(profile.get("target_grade", 7)),
         )
 
-    log.info("Accessibility polish: %d → %d chars (simplify=%s)", len(text), len(cleaned), simplify)
+    log.info(
+        "Accessibility polish: %d -> %d chars (simplify=%s)", len(text), len(cleaned), simplify
+    )
 
     return {
         "accessible_response": cleaned,
@@ -145,8 +147,8 @@ def _add_ssml_breaks(text: str) -> str:
     Add lightweight SSML-like markers. The TTS layer converts these to its
     engine-specific syntax (Piper, Azure, ElevenLabs all support breaks).
     """
-    text = re.sub(r"([?!])\s+", r"\1 <break time=\"400ms\"/> ", text)
-    text = re.sub(r"(\.) (?=[A-ZÄÜÖ])", r".<break time=\"250ms\"/> ", text)
+    text = re.sub(r"([?!])\s+", r'\1 <break time="400ms"/> ', text)
+    text = re.sub(r"(\.) (?=[A-ZÄÜÖ])", r'.<break time="250ms"/> ', text)
     return text
 
 

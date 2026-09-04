@@ -19,9 +19,37 @@ from api.dependencies import current_student
 from graphs.state import build_learning_profile, initial_state
 from models.student import StudentOut
 from voice.streaming import save_upload
+from voice.tts import _strip_ssml
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _spoken_text(final_state: dict) -> str:
+    """Reading text for a non-streaming client: the accessibility-polished
+    response with the TTS-only SSML break markers removed."""
+    text = final_state.get("accessible_response") or final_state.get("generated_response") or ""
+    return _strip_ssml(text)
+
+
+async def _drive_to_completion(graph, config: dict, final_state: dict) -> dict:
+    """Resume the graph past ``interrupt_after=["reflection"]``.
+
+    When a checkpointer is present the graph is compiled to pause after the
+    reflection node, so ``accessibility`` and ``tts`` have not run yet. The
+    WebSocket handler does the same drive-to-completion loop; the non-streaming
+    REST handlers need it too, otherwise the response falls back to the raw
+    (un-polished) ``generated_response``.
+    """
+    for _ in range(4):
+        try:
+            snapshot = await graph.aget_state(config)
+        except Exception:  # no checkpointer configured (tests) — nothing to resume
+            break
+        if not getattr(snapshot, "next", ()):
+            break
+        final_state = await graph.ainvoke(None, config=config)
+    return final_state
 
 
 @router.post("/chat", summary="Single-turn voice chat (upload audio, receive audio).")
@@ -38,6 +66,11 @@ async def voice_chat(
     if not audio.content_type or not audio.content_type.startswith("audio/"):
         raise HTTPException(status_code=400, detail="audio file required")
 
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty audio file")
+    await audio.seek(0)
+
     sid = session_id or str(uuid4())
     audio_path = await save_upload(audio)
 
@@ -52,6 +85,7 @@ async def voice_chat(
     config = {"configurable": {"thread_id": sid}}
 
     final_state = await graph.ainvoke(state, config=config)
+    final_state = await _drive_to_completion(graph, config, final_state)
 
     log.info(
         "Voice chat turn complete (session=%s, last_node=%s)", sid, final_state.get("last_node")
@@ -61,8 +95,7 @@ async def voice_chat(
         "session_id": sid,
         "transcript": final_state.get("transcribed_text"),
         "intent": final_state.get("intent"),
-        "response_text": final_state.get("accessible_response")
-        or final_state.get("generated_response"),
+        "response_text": _spoken_text(final_state),
         "audio_uri": final_state.get("audio_response_path"),
         "next_action": final_state.get("next_action"),
     }
@@ -84,8 +117,9 @@ async def voice_text(
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": sid}}
     final_state = await graph.ainvoke(state, config=config)
+    final_state = await _drive_to_completion(graph, config, final_state)
     return {
         "session_id": sid,
-        "response_text": final_state.get("accessible_response"),
-        "audio_uri": final_state.get("audio_response_path"),
+        "response_text": _spoken_text(final_state),
+        "audio_uri": final_state.get("audio_response_path") or "",
     }

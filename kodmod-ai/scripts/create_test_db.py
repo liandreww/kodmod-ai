@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 _DDL: list[str] = [
     "CREATE EXTENSION IF NOT EXISTS vector",
     "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+    # `create_all` never ALTERs an existing table — heal a pre-existing test DB
+    # whose `classrooms.teacher_id` was created NOT NULL before the ORM made it
+    # nullable (idempotent: no-op if already nullable).
+    "ALTER TABLE classrooms ALTER COLUMN teacher_id DROP NOT NULL",
     """
     CREATE TABLE IF NOT EXISTS curriculum_chunks (
         id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),

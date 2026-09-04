@@ -1,0 +1,11 @@
+{
+  "recorded_at": "2026-09-03T01:00:00Z",
+  "retrieve_error_rate": 0.0,
+  "retrieve_mean_ms": 407.2,
+  "retrieve_n": 60,
+  "retrieve_p50_ms": 350.9,
+  "retrieve_p95_ms": 612.3,
+  "retrieve_status_counts": {
+    "200": 60
+  }
+}

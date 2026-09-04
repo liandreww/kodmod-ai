@@ -34,21 +34,25 @@ async def _seed_exercise(concept_id: str, *, audio_friendly: bool) -> str:
     return str(eid)
 
 
-async def test_km_api_060_exercises_by_concept_audio_only(client, concept_ids, db_cleanup) -> None:  # type: ignore[no-untyped-def]
+async def test_km_api_060_exercises_by_concept_audio_only(  # type: ignore[no-untyped-def]
+    client, concept_ids, db_cleanup, student_factory, auth_headers
+) -> None:
     cid = concept_ids["bangun-datar"]
     good = await _seed_exercise(cid, audio_friendly=True)
     bad = await _seed_exercise(cid, audio_friendly=False)
     db_cleanup.append(("exercises", good))
     db_cleanup.append(("exercises", bad))
 
-    r = await client.get(f"/exercise/by-concept/{cid}")
+    _st, tok = await student_factory()
+    r = await client.get(f"/exercise/by-concept/{cid}", headers=auth_headers(tok))
     assert r.status_code == 200
     ids = {row["id"] for row in r.json()}
     assert good in ids and bad not in ids
 
 
-async def test_km_api_061_exercises_by_concept_empty(client) -> None:  # type: ignore[no-untyped-def]
-    r = await client.get(f"/exercise/by-concept/{uuid.uuid4()}")
+async def test_km_api_061_exercises_by_concept_empty(client, student_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
+    _st, tok = await student_factory()
+    r = await client.get(f"/exercise/by-concept/{uuid.uuid4()}", headers=auth_headers(tok))
     assert r.status_code == 200
     assert r.json() == []
 

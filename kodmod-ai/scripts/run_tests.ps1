@@ -3,10 +3,12 @@
     KODMOD AI  -  ordered test pipeline (Stage 0 -> 10), native PowerShell.
 
 .DESCRIPTION
-    kodmod-ai runs entirely in Docker (docker/docker-compose.test.yml: postgres,
-    redis, llm-stub, api). This SCRIPT runs natively on the host in PowerShell  - 
-    it never runs pytest inside a container. It only calls `docker compose` to
-    bring up the service containers that Stage 3+ talk to over the network.
+    Only the test INFRA runs in Docker (docker/docker-compose.test.yml: postgres,
+    redis, llm-stub, [qdrant]). The `db-init` step and the `api` server run
+    natively on the host - schema+seed via scripts/create_test_db +
+    scripts/seed_curriculum, the API via scripts/serve_test_api - so a code
+    change is picked up by a plain restart, no `docker build`. This SCRIPT runs
+    natively too and never runs pytest inside a container.
 
     Runs each stage in order and STOPS at the first RED stage so bugs can be
     fixed iteratively. See docs/testplan/README.md section 3.
@@ -57,6 +59,8 @@ $ComposeTest = "docker compose -p kodmod-test -f docker/docker-compose.test.yml"
 $Reports = "reports"
 New-Item -ItemType Directory -Force -Path $Reports | Out-Null
 
+$script:ApiProc = $null
+
 # Stages gate on regressions only; known-bug cases are reported separately.
 $NotKnownBug = "and not known_bug"
 
@@ -84,20 +88,49 @@ function Wait-ApiHealthy {
         } catch { }
         Start-Sleep -Seconds 2
     }
-    Write-Bad "api did not become healthy  -  see: $ComposeTest logs api"
+    Write-Bad "api did not become healthy  -  see: $Reports/api.log , $Reports/api.err.log"
     return $false
 }
 
-function Invoke-ComposeInfra {  # postgres + redis + llm-stub + schema/seed (Stage 3)
-    Invoke-Compose "up -d postgres redis llm-stub"
-    Invoke-Compose "up --no-deps db-init"
+function Stop-TestApi {  # kill the host uvicorn started by Invoke-ComposeApi, if any
+    $pidValue = $null
+    if ($script:ApiProc -and -not $script:ApiProc.HasExited) { $pidValue = $script:ApiProc.Id }
+    elseif (Test-Path "$Reports/.api.pid") {
+        $pidValue = [int]((Get-Content "$Reports/.api.pid" -Raw).Trim())
+    }
+    if ($pidValue) {
+        try { Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    $script:ApiProc = $null
+    Remove-Item "$Reports/.api.pid" -ErrorAction SilentlyContinue
 }
 
-function Invoke-ComposeApi {  # + the real backend, built from docker/Dockerfile (Stage 4+)
-    Invoke-Compose "up -d --build api"
-    if (-not $NoCompose) {
-        if (-not (Wait-ApiHealthy)) { return $false }
+function Invoke-ComposeInfra {  # postgres + redis + llm-stub (Docker) + schema/seed (host) — Stage 3
+    Invoke-Compose "up -d postgres redis llm-stub"
+    python -m scripts.init_test_db
+    if ($LASTEXITCODE -ne 0) { throw "scripts.init_test_db failed" }
+}
+
+function Invoke-ComposeApi {  # + the backend, run natively on the host (Stage 4+)
+    # -Checkpointer "memory" (Stage 8) forces a fresh server with the lock-free
+    # in-memory saver — the Postgres saver serialises every graph turn on one
+    # asyncio.Lock. Otherwise reuse a healthy server.
+    param([string]$Checkpointer = "")
+    Invoke-ComposeInfra
+    if (-not $Checkpointer) {
+        try {
+            $r = Invoke-WebRequest -Uri "http://localhost:8000/live" -UseBasicParsing -TimeoutSec 3
+            if ($r.StatusCode -eq 200) { return $true }
+        } catch { }
     }
+    Stop-TestApi
+    # Never inherit reload for perf/e2e — watchfiles churn thrashes concurrency.
+    $env:SERVE_TEST_API_RELOAD = $null
+    $env:KODMOD_CHECKPOINTER = if ($Checkpointer) { $Checkpointer } else { "postgres" }
+    $script:ApiProc = Start-Process -FilePath "python" -ArgumentList "-m", "scripts.serve_test_api" `
+        -NoNewWindow -PassThru -RedirectStandardOutput "$Reports/api.log" -RedirectStandardError "$Reports/api.err.log"
+    $script:ApiProc.Id | Out-File -FilePath "$Reports/.api.pid" -Encoding ascii
+    if (-not (Wait-ApiHealthy)) { return $false }
     return $true
 }
 
@@ -113,7 +146,7 @@ function Invoke-Stage([int]$Num, [string]$Label, [scriptblock]$Body) {
     $ok = & $Body
     if ($ok -eq $false) {
         Write-Bad "Stage $Num FAILED  -  fix the root cause, then: pwsh scripts/run_tests.ps1 -From $Num"
-        exit 1
+        throw "STAGE_FAILED:$Num"
     }
     Write-Ok "Stage $Num PASSED"
 }
@@ -174,8 +207,8 @@ function Stage7 {
 }
 
 function Stage8 {  # non-blocking: record baselines, never fail the pipeline
-    if (-not (Invoke-ComposeApi)) { return $true }
-    Invoke-Compose "--profile load up -d --build"
+    if (-not (Invoke-ComposeApi -Checkpointer "memory")) { return $true }
+    Invoke-Compose "--profile load up -d locust"
     python -m pytest -q -m "perf $NotKnownBug" --junitxml="$Reports/junit-perf.xml" `
         --benchmark-json="docs/testplan/baselines/bench.json"
     if ($LASTEXITCODE -ne 0) { Write-Bad "Stage 8 had failures (non-blocking)  -  see reports/junit-perf.xml" }
@@ -196,11 +229,15 @@ function Invoke-Burndown {  # non-blocking: how many tracked bugs are still open
 
 function Invoke-Gate {
     Write-Header "Stage 10  -  Release Readiness Gate"
-    if (Test-Path "scripts/readiness_gate.py") {
-        python scripts/readiness_gate.py
-        return
+    # Repo-inspection meta-checks (traceability, docs, migration policy, marker
+    # hygiene) - no service needed. Non-blocking; readiness_gate.py folds the
+    # result in via reports/junit-readiness.xml.
+    python -m pytest -q -m "readiness $NotKnownBug" --junitxml="$Reports/junit-readiness.xml"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Bad "Stage 10 readiness meta-checks had failures  -  see reports/junit-readiness.xml"
     }
-    Write-Host "readiness_gate.py not implemented yet  -  see docs/testplan/10-readiness.md"
+    python scripts/readiness_gate.py
+    return ($LASTEXITCODE -eq 0)
 }
 
 # ------------------------------------------------------------------- main -----
@@ -210,22 +247,33 @@ if ($Burndown) {
     exit 0
 }
 
-Invoke-Stage 0 "Static & Build"        { Stage0 }
-Invoke-Stage 1 "Unit"                  { Stage1 }
-Invoke-Stage 2 "Contract / Schema"     { Stage2 }
-Invoke-Stage 3 "Integration"           { Stage3 }
-Invoke-Stage 4 "API / Endpoint"        { Stage4 }
-Invoke-Stage 5 "WebSocket / Realtime"  { Stage5 }
-Invoke-Stage 6 "E2E user journey"      { Stage6 }
-Invoke-Stage 7 "System (black-box)"    { Stage7 }
-Invoke-Stage 8 "Performance / Load"    { Stage8 }
-Invoke-Stage 9 "Security (dynamic)"    { Stage9 }
+$exitCode = 0
+try {
+    Invoke-Stage 0 "Static & Build"        { Stage0 }
+    Invoke-Stage 1 "Unit"                  { Stage1 }
+    Invoke-Stage 2 "Contract / Schema"     { Stage2 }
+    Invoke-Stage 3 "Integration"           { Stage3 }
+    Invoke-Stage 4 "API / Endpoint"        { Stage4 }
+    Invoke-Stage 5 "WebSocket / Realtime"  { Stage5 }
+    Invoke-Stage 6 "E2E user journey"      { Stage6 }
+    Invoke-Stage 7 "System (black-box)"    { Stage7 }
+    Invoke-Stage 8 "Performance / Load"    { Stage8 }
+    Invoke-Stage 9 "Security (dynamic)"    { Stage9 }
 
-if ($Gate -or ($null -eq $Only -and $From -le 9)) {
-    Invoke-Gate
+    if ($Gate) {
+        if ((Invoke-Gate) -eq $false) { throw "STAGE_FAILED:10" }
+    } elseif ($null -eq $Only -and $From -le 9) {
+        Invoke-Gate | Out-Null   # full-pipeline run: report the gate, non-blocking
+    }
+
+    # Always show what's left on the bug backlog (never fails the pipeline).
+    if ($null -eq $Only) { Invoke-Burndown }
+
+    Write-Ok "pipeline complete"
+} catch {
+    if ("$_" -notmatch '^STAGE_FAILED:') { Write-Bad "$_" }
+    $exitCode = 1
+} finally {
+    Stop-TestApi
 }
-
-# Always show what's left on the bug backlog (never fails the pipeline).
-if ($null -eq $Only) { Invoke-Burndown }
-
-Write-Ok "pipeline complete"
+exit $exitCode

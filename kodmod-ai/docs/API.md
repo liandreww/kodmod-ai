@@ -102,9 +102,9 @@ Static teacher-authored exercises filtered to audio-friendly ones.
 
 ## Health
 
-- `GET /health/live` — process liveness
-- `GET /health/ready` — DB + Redis readiness
-- `GET /health/version` — runtime version metadata
+- `GET /live` — process liveness
+- `GET /ready` — DB + Redis readiness
+- `GET /version` — runtime version metadata
 
 ## Metrics
 

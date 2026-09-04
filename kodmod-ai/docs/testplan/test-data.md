@@ -105,7 +105,7 @@ terkecil dari kedua penyebut, ubah menjadi pecahan senilai, lalu jumlahkan.
 
 ## 7. Konfigurasi environment test
 
-Dua tempat berbeda — kodmod-ai jalan penuh di Docker, pytest jalan native di host:
+Dua proses host berbeda (infra Postgres/Redis/llm-stub di Docker; `db-init` & `api` di host):
 
 **(a) Host, proses pytest** (Stage 1/3; `tests/conftest.py` men-set default via
 `os.environ.setdefault`, override lewat env asli/`.env` lokal bila perlu):
@@ -131,32 +131,36 @@ JWT_SECRET=test-secret-not-for-prod-0123456789abcdef
 KODMOD_API_BASE_URL=http://localhost:8000   # dipakai fixture client/ws_url Stage 4-9
 ```
 
-**(b) Container `api`** (Stage 4-9 — di-set di `x-app-env` / service `api` pada
-`docker/docker-compose.test.yml`, LLM/embedding default ke `llm-stub`):
+**(b) Host, proses `api`** (Stage 4-9 — di-set oleh `scripts/serve_test_api` via
+`os.environ.setdefault` sebelum import `config.settings`, jadi menang atas `.env` on-disk;
+LLM/embedding default ke `llm-stub` pada port host):
 
 ```
 ENV=test
-DB_HOST=postgres
-DB_PORT=5432
+DB_HOST=localhost
+DB_PORT=5433
 DB_NAME=kodmod_test
-REDIS_HOST=redis
+REDIS_HOST=localhost
+REDIS_PORT=6380
 KODMOD_LLM_PROVIDER=vllm
-VLLM_BASE_URL=http://llm-stub:8000/v1
+VLLM_BASE_URL=http://localhost:8099/v1
 KODMOD_EMBED_BACKEND=openai
-OPENAI_BASE_URL=http://llm-stub:8000/v1
+OPENAI_BASE_URL=http://localhost:8099/v1
+OPENAI_API_KEY=stub-key
 EMBEDDING_DIM=1024
 STT_ENABLED=false
 TTS_ENABLED=false
+LOG_JSON=true
 JWT_SECRET=test-secret-not-for-prod-0123456789abcdef
 ```
 
-`@real_llm` variant: naikkan ULANG container `api` dengan provider nyata di shell host
-sebelum `docker compose up` (di-`skip` di sisi pytest kecuali `KODMOD_RUN_REAL_LLM=1`):
+`@real_llm` variant: jalankan ULANG proses `api` dengan provider nyata di shell host
+(di-`skip` di sisi pytest kecuali `KODMOD_RUN_REAL_LLM=1`):
 
 ```powershell
 $env:KODMOD_LLM_PROVIDER = "anthropic"
 $env:ANTHROPIC_API_KEY   = "<dari secret CI, jangan commit>"
-docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+python -m scripts.serve_test_api
 ```
 
 Tetap `STT_ENABLED=false`, `TTS_ENABLED=false` — text-mode di semua kondisi.

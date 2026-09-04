@@ -4,22 +4,21 @@ Stage map (see docs/testplan/):
   0 static      1 unit        2 contract    3 integration   4 api
   5 ws          6 e2e         7 system      8 perf          9 security
 
-kodmod-ai runs entirely in Docker (docker/docker-compose.test.yml: postgres,
-redis, llm-stub, api). Test SCRIPTS run natively on the host (PowerShell or
-bash), never inside a container:
+Only the infra runs in Docker (docker/docker-compose.test.yml: postgres, redis,
+llm-stub). `db-init` and `api` run natively on the host, as do the test SCRIPTS:
   * Stage 1 (unit) needs no service at all.
   * Stage 3 (integration) calls Python functions directly in this process and
     talks to Postgres/Redis over their published ports.
-  * Stage 4-9 (api/ws/e2e/system/perf/security) talk to the real `api`
-    container over HTTP/WS — see the `client`/`ws_url` fixtures below. Bring
-    the stack up first: `docker compose -p kodmod-test -f
-    docker/docker-compose.test.yml up -d --build api`.
+  * Stage 4-9 (api/ws/e2e/system/perf/security) talk to the host `api` process
+    (`python -m scripts.serve_test_api`) over HTTP/WS — see the `client`/`ws_url`
+    fixtures below. `scripts/run_tests.{ps1,sh}` start/stop it for you.
 
 Environment is forced to ``test`` BEFORE any project import so the cached
 ``config.settings`` singleton picks up test values. For Stage 1/3, LLM and
 embedding calls made *in this process* are stubbed by autouse fixtures unless
-a test is marked ``real_llm``. For Stage 4+, the `api` container stubs its own
-LLM/embedding calls via env (KODMOD_LLM_PROVIDER=vllm -> the llm-stub service).
+a test is marked ``real_llm``. For Stage 4+, the host `api` stubs its own
+LLM/embedding calls via env set by scripts/serve_test_api
+(KODMOD_LLM_PROVIDER=vllm -> the llm-stub service).
 """
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ CLASSROOM_A = uuid.UUID("33333333-3333-3333-3333-333333333331")
 # Markers are registered in pyproject.toml [tool.pytest.ini_options].markers
 # (single source of truth — keep the two lists in sync if either changes):
 #   static, unit, contract, integration, api, ws, e2e, system, perf, security,
-#   real_llm, slow, db, redis
+#   readiness, real_llm, slow, db, redis, known_bug
 # --------------------------------------------------------------------------- #
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     skip_real = pytest.mark.skip(reason="real LLM disabled (set KODMOD_RUN_REAL_LLM=1)")
@@ -221,20 +220,22 @@ async def redis_client() -> AsyncIterator[object]:
 
 
 # --------------------------------------------------------------------------- #
-# HTTP/WS client against the real `api` container (Stage 4-9).
+# HTTP/WS client against the real `api` process (Stage 4-9).
 #
-# kodmod-ai runs entirely in Docker (postgres, redis, llm-stub, api — see
-# docker/docker-compose.test.yml). Test *scripts* run natively on the host
-# (PowerShell/bash), never inside a container, and talk to the `api` service
-# over the port it publishes. Bring the stack up first:
+# Only the infra runs in Docker (postgres, redis, llm-stub — see
+# docker/docker-compose.test.yml). `db-init` and `api` run natively on the host.
+# Test *scripts* run natively too and talk to the host `api` over :8000.
+# Bring it up first (or just let scripts/run_tests.{ps1,sh} do it):
 #
-#   docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+#   docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d postgres redis llm-stub
+#   python -m scripts.init_test_db
+#   python -m scripts.serve_test_api
 #
-# `KODMOD_API_BASE_URL` overrides the default http://localhost:8000 (matches
-# compose's API_HOST_PORT). The container gets its own LLM/embedding stub via
-# env (KODMOD_LLM_PROVIDER=vllm -> llm-stub) — the stub_llms/stub_embeddings
-# fixtures above only matter for Stage 1/3, which call Python functions
-# directly in the host pytest process, not through the container.
+# `KODMOD_API_BASE_URL` overrides the default http://localhost:8000. The host
+# `api` gets its LLM/embedding stub via env set by scripts/serve_test_api
+# (KODMOD_LLM_PROVIDER=vllm -> http://localhost:8099/v1) — the
+# stub_llms/stub_embeddings fixtures above only matter for Stage 1/3, which call
+# Python functions directly in the host pytest process.
 # --------------------------------------------------------------------------- #
 API_BASE_URL = os.environ.get("KODMOD_API_BASE_URL", "http://localhost:8000")
 

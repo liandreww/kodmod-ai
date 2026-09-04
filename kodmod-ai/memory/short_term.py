@@ -108,3 +108,22 @@ async def set_pacing(session_id: str, rate: float) -> None:
 async def get_pacing(session_id: str) -> float:
     v = await get_value(session_id, "tts_rate")
     return float(v) if v is not None else settings.TTS_RATE
+
+
+# --- in-flight quiz session ---------------------------------------------
+# LangGraph only checkpoints canonical state when a checkpointer is wired.
+# The voice loop re-enters the graph at `stt` for every utterance with a
+# fresh state, so the multi-turn quiz keeps its progress here instead:
+# `problem_generator` writes it, `intent_router` rehydrates it on the next
+# turn, `update_student_model` advances (or clears) it.
+async def store_quiz_session(session_id: str, data: dict) -> None:
+    await set_value(session_id, "quiz", data)
+
+
+async def fetch_quiz_session(session_id: str) -> dict | None:
+    return await get_value(session_id, "quiz")
+
+
+async def clear_quiz_session(session_id: str) -> None:
+    r = await get_redis()
+    await r.delete(_key(session_id, "quiz"))

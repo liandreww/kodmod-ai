@@ -5,8 +5,10 @@
 > RAG (pgvector/Qdrant), analytics BKT, memory Postgres+Redis, voice STT/TTS.
 
 Dokumen ini adalah **rencana pengujian "brutal"**: sistematis, berlapis, otomatis penuh,
-berjalan dalam **satu Docker Compose project**, dengan **urutan eksekusi eksplisit** supaya
-perbaikan bug bisa dilakukan iteratif sampai sistem "siap dipakai".
+dengan **urutan eksekusi eksplisit** supaya perbaikan bug bisa dilakukan iteratif sampai
+sistem "siap dipakai". **Infra** (Postgres, Redis, llm-stub, opsional Qdrant) jalan di satu
+Docker Compose project `kodmod-test`; **`db-init` dan `api` jalan native di host** (uvicorn
+membaca source langsung) supaya perubahan kode tidak butuh `docker build`.
 
 ---
 
@@ -64,13 +66,13 @@ blast-radius.* Gate paling murah & paling memblokir dijalankan lebih dulu.
 | 0 | Static & Build | [`00-static.md`](00-static.md) | — | < 90 s | **blok total** |
 | 1 | Unit (logika murni) | [`01-unit.md`](01-unit.md) | — | < 30 s | blok |
 | 2 | Contract / Schema | [`02-contract.md`](02-contract.md) | — | < 30 s | blok |
-| 3 | Integration | [`03-integration.md`](03-integration.md) | postgres, redis | 2–5 min | blok |
-| 4 | API / Endpoint | [`04-api.md`](04-api.md) | postgres, redis | 3–6 min | blok |
-| 5 | WebSocket / Realtime | [`05-ws.md`](05-ws.md) | postgres, redis | 1–2 min | blok |
-| 6 | E2E user journey | [`06-e2e.md`](06-e2e.md) | postgres, redis, (llm-stub) | 2–5 min | blok |
-| 7 | System (black-box compose) | [`07-system.md`](07-system.md) | +api, +qdrant | 5–10 min | blok |
-| 8 | Performance / Load | [`08-performance.md`](08-performance.md) | +api, +locust | 10–30 min | non-blok (baseline + ambang regresi) |
-| 9 | Security (dinamis) | [`09-security.md`](09-security.md) | +api | 3–8 min | blok (0 High/Critical) |
+| 3 | Integration | [`03-integration.md`](03-integration.md) | Docker: postgres, redis, llm-stub · host: schema+seed | 2–5 min | blok |
+| 4 | API / Endpoint | [`04-api.md`](04-api.md) | + host: `api` (`serve_test_api`) | 3–6 min | blok |
+| 5 | WebSocket / Realtime | [`05-ws.md`](05-ws.md) | + host: `api` | 1–2 min | blok |
+| 6 | E2E user journey | [`06-e2e.md`](06-e2e.md) | + host: `api` | 2–5 min | blok |
+| 7 | System (black-box) | [`07-system.md`](07-system.md) | + host: `api` (restart via pidfile), + qdrant | 5–10 min | blok |
+| 8 | Performance / Load | [`08-performance.md`](08-performance.md) | + host: `api`, + locust (Docker) | 10–30 min | non-blok (baseline + ambang regresi) |
+| 9 | Security (dinamis) | [`09-security.md`](09-security.md) | + host: `api` | 3–8 min | blok (0 High/Critical) |
 | 10 | Release Readiness Gate | [`10-readiness.md`](10-readiness.md) | all | — | gate rilis |
 
 ### 3.1 Kenapa urutan ini
@@ -119,30 +121,38 @@ Sistem **"siap dipakai" = Stage 10 hijau** DAN `make test-burndown` 0 FAIL / 0 P
 
 ---
 
-## 4. Lingkungan uji — kodmod-ai jalan penuh di satu Docker Compose project
+## 4. Lingkungan uji — infra di Docker, `db-init` + `api` di host
 
-**kodmod-ai sebagai aplikasi** — Postgres+pgvector, Redis, (Qdrant), dan backend API —
-berjalan **sepenuhnya di Docker** lewat `docker/docker-compose.test.yml` (project name
-**`kodmod-test`**). Itu adalah *system under test*.
+**Infra** — Postgres+pgvector, Redis, llm-stub, (Qdrant) — jalan lewat
+`docker/docker-compose.test.yml` (project name **`kodmod-test`**). Tak satu pun image itu
+membawa source aplikasi, jadi tidak pernah butuh rebuild saat kode berubah.
 
-**Skrip pengujian (pytest, locust) TIDAK dijalankan di dalam container.** Dijalankan
-native di host — PowerShell (`scripts/run_tests.ps1`) atau bash (`scripts/run_tests.sh`,
-juga dipakai CI) — dan terhubung ke container-container itu lewat port yang di-*publish*:
+**Backend tidak ada di compose.** `db-init` (schema + seed) dan `api` (uvicorn) jalan
+**native di host**:
+- `python -m scripts.init_test_db` — kunci env test lalu bootstrap skema ORM +
+  `curriculum_chunks` + seed kurikulum (idempoten). Membungkus `scripts.create_test_db`
+  + `scripts.seed_curriculum` dengan `DB_NAME=kodmod_test` dipaksa (bukan `kodmod` dari `.env`).
+- `python -m scripts.serve_test_api` — `uvicorn api.main:app` dengan env test terkunci
+  (`os.environ.setdefault` sebelum import `config.settings`, menang atas `.env` on-disk),
+  LLM/embed → `llm-stub` di `http://localhost:8099/v1`, pidfile `reports/.api.pid`. Membaca
+  source langsung → perubahan kode = restart proses, **tanpa `docker build`**.
+
+**Skrip pengujian (pytest, locust) TIDAK dijalankan di dalam container.** Dijalankan native
+di host — PowerShell (`scripts/run_tests.ps1`) atau bash (`scripts/run_tests.sh`, juga
+dipakai CI). Keduanya yang mengurus start/stop proses `api` host untuk Stage 4+:
 - Stage 1 (unit): tidak butuh service apa pun.
 - Stage 3 (integration): memanggil fungsi Python langsung di proses pytest, tersambung ke
   Postgres/Redis lewat port host.
-- **Stage 4–9** (api/ws/e2e/system/perf/security): pytest memanggil container `api` lewat
-  **HTTP/WS sungguhan** (`http://localhost:8000`, `ws://localhost:8000/ws/voice`) — bukan
-  import in-process. Ini paling akurat karena yang diuji adalah image Docker yang sama
-  dengan yang dipakai di produksi.
+- **Stage 4–9** (api/ws/e2e/system/perf/security): pytest memanggil proses `api` host lewat
+  **HTTP/WS sungguhan** (`http://localhost:8000`, `ws://localhost:8000/ws/voice`) — proses
+  terpisah, bukan import in-process/`ASGITransport`, jadi tetap black-box.
 
 Dijalankan dari `kodmod-ai/`:
 
 ```powershell
-# bawa naik seluruh stack aplikasi (postgres, redis, llm-stub, db-init, api)
-docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
-
-# lalu, native di host:
+# 1. infra
+docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d postgres redis llm-stub
+# 2-4. schema+seed, api host, lalu semua stage — di-orkestrasi oleh:
 pip install -e ".[test]"
 pwsh scripts/run_tests.ps1          # Windows
 # atau: bash scripts/run_tests.sh   # bash / CI
@@ -152,29 +162,34 @@ pwsh scripts/run_tests.ps1          # Windows
 # matriks backend qdrant (Stage 7 saja)
 docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile qdrant up -d
 
-# beban (Stage 8)
-docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile load up -d
+# beban (Stage 8) — jalankan setelah api host hidup di :8000
+docker compose -p kodmod-test -f docker/docker-compose.test.yml --profile load up -d locust
 ```
+
+**Service Docker** (`docker/docker-compose.test.yml`):
 
 | Service | Image / build | Peran | Profile |
 |---|---|---|---|
-| `postgres` | `pgvector/pgvector:pg16` | DB + pgvector. `POSTGRES_DB=kodmod_test`, `POSTGRES_USER/PASSWORD=kodmod`. Healthcheck `pg_isready -U kodmod -d kodmod_test`. **Tidak** mount `schema.sql`. | default |
-| `redis` | `redis:7-alpine` | Session store. Healthcheck `redis-cli ping`. | default |
-| `qdrant` | `qdrant/qdrant:v1.10.1` | Matriks `VECTOR_BACKEND=qdrant` (Stage 7). | `qdrant` |
-| `llm-stub` | build `docker/llm_stub/` | Fake OpenAI-compatible: `/v1/chat/completions`, `/v1/embeddings` (1024-dim), `/health`. Deterministik per hash prompt. | default |
-| `db-init` | build `docker/Dockerfile` | One-shot: `python -m scripts.create_test_db && python -m scripts.seed_curriculum`. | default |
-| `api` | build `docker/Dockerfile` | **Backend sungguhan** (image sama seperti produksi). Env text-mode; LLM/embed → `llm-stub`. Healthcheck `/live`. Bagian dari stack default — wajib menyala mulai Stage 4. | default |
-| `locust` | `locustio/locust` | Beban terhadap `api`. | `load` |
+| `postgres` | `pgvector/pgvector:pg16` | DB + pgvector. `POSTGRES_DB=kodmod_test`, `POSTGRES_USER/PASSWORD=kodmod`. Host port **5433**. Healthcheck `pg_isready`. **Tidak** mount `schema.sql`. | default |
+| `redis` | `redis:7-alpine` | Session store. Host port **6380**. Healthcheck `redis-cli ping`. | default |
+| `qdrant` | `qdrant/qdrant:v1.10.1` | Matriks `VECTOR_BACKEND=qdrant` (Stage 7). Host port **6335**. | `qdrant` |
+| `llm-stub` | build `docker/llm_stub/` | Fake OpenAI-compatible: `/v1/chat/completions`, `/v1/embeddings` (1024-dim), `/health`. Deterministik per hash prompt. Host port **8099**. | default |
+| `locust` | `locustio/locust` | Beban terhadap `api` host via `host.docker.internal:8000`. | `load` |
 
-Tidak ada service `test-runner` — pytest berjalan di host, bukan di kontainer.
+**Proses host** (bukan container):
 
-**Rekonsiliasi environment (di-fix di compose test):**
+| Proses | Perintah | Peran |
+|---|---|---|
+| db-init | `python -m scripts.init_test_db` | Skema ORM + `curriculum_chunks` DDL + seed kurikulum (idempoten); env test dikunci. |
+| api | `python -m scripts.serve_test_api` | `uvicorn api.main:app`, env test, `:8000`, pidfile `reports/.api.pid`. Wajib hidup mulai Stage 4. |
+
+**Rekonsiliasi environment:**
 
 | Masalah asli | Perbaikan di lingkungan test |
 |---|---|
 | `conftest` set `DB_NAME=kodmod_test`, compose lama `POSTGRES_DB=kodmod` | `POSTGRES_DB=kodmod_test` + `DB_NAME=kodmod_test` konsisten |
-| `.env` on-disk `EMBEDDING_DIM=1536` vs kolom `vector(1024)` | `EMBEDDING_DIM=1024` dipaksa di env compose |
-| `.env` on-disk berisi `OPENAI_API_KEY` & `JWT_SECRET` asli | container `api` **tidak** membaca `.env`; env eksplisit di compose; key asli hanya via CI secret untuk `@real_llm` |
+| `.env` on-disk `EMBEDDING_DIM=1536` vs kolom `vector(1024)` | `EMBEDDING_DIM=1024` dipaksa: env compose (infra) + `scripts/serve_test_api` (api host) |
+| `.env` on-disk berisi `OPENAI_API_KEY` & `JWT_SECRET` asli | `scripts/serve_test_api` mengunci env test via `os.environ.setdefault` **sebelum** import `config.settings` (menang atas `.env`); key asli hanya via shell/CI secret untuk `@real_llm` |
 | `schema.sql` ≠ ORM `models.py` | skema test dari `create_test_db.py` (ORM `create_all` + DDL `curriculum_chunks`), **bukan** `schema.sql` |
 | default `alembic upgrade head` no-op (tidak ada `versions/`) | tidak dipakai untuk bootstrap test |
 
@@ -188,8 +203,8 @@ Tidak ada service `test-runner` — pytest berjalan di host, bukan di kontainer.
 | Coverage | `pytest-cov` + `coverage combine` lintas stage | sudah ada |
 | Paralel / stabilitas | `pytest-xdist`, `pytest-randomly`, `pytest-timeout` | **tambah** |
 | Mock | `pytest-mock`, `respx` (stub HTTP keluar) | **tambah** |
-| HTTP client | `httpx.AsyncClient(base_url="http://localhost:8000")` — HTTP nyata ke container `api` (Stage 4-9); tanpa `ASGITransport` | httpx sudah dep inti |
-| WebSocket client | `httpx-ws` / paket `websockets` ke `ws://localhost:8000/ws/voice` nyata | **tambah `httpx-ws`** |
+| HTTP client | `httpx.AsyncClient(base_url="http://localhost:8000")` — HTTP nyata ke proses `api` host (Stage 4-9); tanpa `ASGITransport` | httpx sudah dep inti |
+| WebSocket client | `httpx-ws` / paket `websockets` ke `ws://localhost:8000/ws/voice` nyata (proses `api` host) | **tambah `httpx-ws`** |
 | Stub LLM | `langchain_core.language_models.fake_chat_models.GenericFakeChatModel` + wrapper `with_structured_output` | pustaka sudah ada |
 | Stub embedding | fungsi hash→vektor 1024 float deterministik | tulis di `tests/_fakes/` |
 | API contract/fuzz | `schemathesis` (dari `/openapi.json`) | **tambah** |
@@ -257,6 +272,7 @@ Ditambahkan ke `pyproject.toml` sebagai extra baru `[project.optional-dependenci
 **Entry (mulai kampanye pengujian):**
 - `docker compose -p kodmod-test -f docker/docker-compose.test.yml config` valid.
 - `pip install -e ".[test]"` sukses di Python 3.11.
+- `python -m scripts.serve_test_api` boot bersih ke `/live` 200 (setelah infra + schema+seed).
 - `docs/testplan/*` (dokumen ini + 00–10 + traceability + test-data) tersedia.
 
 **Exit (sistem "siap dipakai") — Stage 10 hijau:**
@@ -295,7 +311,7 @@ Ditambahkan ke `pyproject.toml` sebagai extra baru `[project.optional-dependenci
 | `schema.sql` ≠ ORM | drift skema | test hanya terhadap ORM; `schema.sql` ditandai *deprecated* di `03-integration.md` |
 | Stub LLM terlalu "bodoh" untuk node yang parsing JSON ketat | node gagal parse → false negative | fake chat model per-peran memuat contoh output valid (JSON/структур) sesuai prompt tiap agen; lihat `tests/_fakes/fake_chat.py` |
 | `@lru_cache` pada getter LLM & `_model()` embedding | monkeypatch tak berefek | patch **nama di modul pemakai**, bukan sumber; `cache_clear()` di fixture |
-| Windows dev vs Linux CI (`/var/lib/kodmod`, path) | flaky lokal | env compose set `AUDIO_DIR`/`UPLOAD_DIR` ke path dalam kontainer `api` (Linux); pytest sendiri jalan native di host (PowerShell di Windows, bash di CI Linux) dan tidak menyentuh path itu langsung — semua akses lewat HTTP ke `api` |
+| Windows dev vs Linux CI (path) | flaky lokal | `scripts/serve_test_api` set `AUDIO_DIR`/`UPLOAD_DIR` ke `./.runtime/...` relatif repo (dibuat otomatis), sama di Windows & Linux; pytest jalan native di host dan tidak menyentuh path itu langsung — semua akses lewat HTTP ke `api` |
 | Rahasia asli di `.env` on-disk | kebocoran | `detect-secrets` menandainya (KM-STATIC-021) + isu rotasi wajib; env test tidak membaca `.env` |
 | Load test dgn `llm-stub` tidak mencerminkan latency nyata | SLO menyesatkan | dokumentasikan eksplisit: Stage 8 mengukur overhead framework/DB/checkpointer, bukan model |
 

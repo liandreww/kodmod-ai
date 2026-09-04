@@ -37,7 +37,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from agents.accessibility_agent import accessibility_node
@@ -78,7 +78,7 @@ def route_after_intent(state: KODMODState) -> str:
     questions = state.get("quiz_questions") or []
     idx = state.get("current_question_index", 0)
     quiz_in_progress = bool(state.get("quiz_session_id")) and idx < len(questions)
-    if intent == "quiz" and quiz_in_progress:
+    if intent == "quiz" and quiz_in_progress and state.get("student_answer"):
         return "scoring"
 
     if intent == "tutoring":
@@ -125,12 +125,19 @@ def route_after_tutoring(state: KODMODState) -> str:
 
 
 def route_after_analyzer(state: KODMODState) -> str:
-    """After Quiz Analyzer, decide whether to keep quizzing or wrap up."""
+    """After the student model update, decide whether the quiz is finished.
+
+    ``update_student_model_node`` has already advanced ``current_question_index``,
+    so ``idx`` here points at the *next* unanswered question. When the quiz is
+    exhausted we push to the analytics cluster; otherwise the answer turn ends
+    and the next question is asked when the student's following utterance
+    re-enters the graph.
+    """
     questions = state.get("quiz_questions", [])
     idx = state.get("current_question_index", 0)
-    if idx + 1 < len(questions):
-        return "quiz_ask"  # next question
-    return "analytics"  # quiz finished → push to analytics cluster
+    if idx >= len(questions):
+        return "analytics"  # quiz finished → push to analytics cluster
+    return "end"  # more questions remain → end this turn
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +146,7 @@ def route_after_analyzer(state: KODMODState) -> str:
 
 
 async def build_kodmod_graph(
-    checkpointer: AsyncPostgresSaver | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> Any:
     """
     Assemble and compile the KODMOD AI graph.
@@ -227,8 +234,8 @@ async def build_kodmod_graph(
         "update_student_model",
         route_after_analyzer,
         {
-            "quiz_ask": "quiz_ask",
             "analytics": "analytics",
+            "end": END,
         },
     )
 

@@ -21,12 +21,17 @@ On shutdown: drains in-flight WebSockets and closes pools cleanly.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from prometheus_client import make_asgi_app
+from psycopg import AsyncConnection
+from psycopg.rows import DictRow, dict_row
+from psycopg_pool import AsyncConnectionPool
 
 from api.routes import analytics, content, exercise, health, quiz, student, voice
 from api.websockets import voice_stream
@@ -47,11 +52,30 @@ async def lifespan(app: FastAPI):
     # 1. DB pools
     await init_db()
 
-    # 2. LangGraph checkpointer + graph
-    cp_cm = AsyncPostgresSaver.from_conn_string(settings.LANGGRAPH_DB_URI)
-    app.state.checkpointer_cm = cp_cm
-    checkpointer = await cp_cm.__aenter__()
-    await checkpointer.setup()
+    # 2. LangGraph checkpointer + graph.
+    # AsyncPostgresSaver serialises every checkpoint op on one process-wide
+    # asyncio.Lock (langgraph internal), so under concurrency the graph turns
+    # run strictly one at a time — fine for prod, fatal for the load probe
+    # (KM-PERF-020). A load run sets KODMOD_CHECKPOINTER=memory to swap in the
+    # lock-free in-memory saver; everything else keeps Postgres persistence.
+    app.state.checkpointer_pool = None
+    checkpointer: BaseCheckpointSaver
+    if os.getenv("KODMOD_CHECKPOINTER", "postgres").lower() == "memory":
+        from langgraph.checkpoint.memory import MemorySaver
+
+        checkpointer = MemorySaver()
+        log.info("Checkpointer: in-memory (KODMOD_CHECKPOINTER=memory)")
+    else:
+        cp_pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
+            settings.LANGGRAPH_DB_URI,
+            open=False,
+            max_size=settings.DB_POOL_SIZE + settings.DB_MAX_OVERFLOW,
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        )
+        await cp_pool.open()
+        app.state.checkpointer_pool = cp_pool
+        checkpointer = AsyncPostgresSaver(cp_pool)
+        await checkpointer.setup()
     app.state.graph = await build_kodmod_graph(checkpointer=checkpointer)
 
     log.info("KODMOD AI ready (env=%s)", settings.ENV)
@@ -59,7 +83,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     log.info("Shutting down KODMOD AI")
-    await app.state.checkpointer_cm.__aexit__(None, None, None)
+    if app.state.checkpointer_pool is not None:
+        await app.state.checkpointer_pool.close()
     await close_db()
 
 

@@ -19,18 +19,22 @@ ALLOWLIST = {
     ("GET", "/docs"),
     ("GET", "/redoc"),
     ("GET", "/docs/oauth2-redirect"),
-}
-
-# Endpoints that currently ship with no auth but are NOT a conscious allowlist entry.
-KNOWN_UNAUTH_GAPS = {
+    # Conscious public surface:
+    #  - self-service student onboarding
     ("POST", "/student"),
-    ("GET", "/student/{student_id}/profile"),
+    #  - read-only curriculum browsing (no learner data)
     ("GET", "/content/concepts"),
     ("GET", "/content/concepts/{concept_id}"),
     ("GET", "/content/concepts/{concept_id}/lessons"),
     ("POST", "/content/retrieve"),
-    ("GET", "/exercise/by-concept/{concept_id}"),
+    #  - Prometheus scrape endpoint (network-restricted in deployment)
     ("MOUNT", "/metrics"),
+}
+
+# Endpoints that currently ship with no auth but are NOT a conscious allowlist entry.
+KNOWN_UNAUTH_GAPS = {
+    ("GET", "/student/{student_id}/profile"),
+    ("GET", "/exercise/by-concept/{concept_id}"),
 }
 
 

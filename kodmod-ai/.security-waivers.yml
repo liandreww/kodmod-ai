@@ -1,0 +1,20 @@
+# =============================================================================
+# Security finding waivers — read by scripts/readiness_gate.py (KM-READY-007).
+#
+# A High/Critical finding from Stage 0 (bandit / pip-audit / safety / trivy /
+# gitleaks) or Stage 9 (dynamic) fails the release gate UNLESS it has a dated
+# waiver here. Every waiver MUST carry an `expires:` date (YYYY-MM-DD); an
+# expired or undated waiver does not count.
+#
+# Format:
+#   waivers:
+#     - id: "CVE-2025-XXXXX"          # or a Stage-9 test id, e.g. "KM-SEC-046"
+#       reason: "why this is acceptable for now"
+#       owner: "who signed off"
+#       added: 2026-09-02
+#       expires: 2026-12-01           # review-by date; required
+#
+# NOTE: the two tornado CVEs already waived for the local Jupyter-only path live
+# in `.pip-audit-ignore`, not here.
+# =============================================================================
+waivers: []

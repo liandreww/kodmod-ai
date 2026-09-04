@@ -83,10 +83,12 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
         log.warning("Recommendation JSON parse failed; using fallback")
         parsed = _fallback(summary)
 
-    recs = parsed.get("recommendations", [])
+    recs = _normalize_recs(parsed.get("recommendations", []))
     intro = parsed.get("spoken_intro", "Inilah rekomendasi untukmu.")
 
-    spoken = intro + " " + " ".join(f"{i + 1}. {r['text']}" for i, r in enumerate(recs))
+    spoken = (
+        intro + " " + " ".join(f"{i + 1}. {r['text']}" for i, r in enumerate(recs) if r.get("text"))
+    )
 
     log.info("Generated %d recommendations", len(recs))
 
@@ -100,6 +102,27 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
         "next_action": "accessibility_polish",
         "last_node": "recommendation",
     }
+
+
+def _normalize_recs(raw: Any) -> list[dict[str, Any]]:
+    """Coerce ``recommendations`` into ``{type, text, concept_id}`` dicts.
+
+    The LLM (or a stub) may hand back either a list of objects or a plain list
+    of strings — tolerate both so the analytics turn never 500s.
+    """
+    out: list[dict[str, Any]] = []
+    for r in raw or []:
+        if isinstance(r, str):
+            out.append({"type": "habit", "text": r, "concept_id": ""})
+        elif isinstance(r, dict):
+            out.append(
+                {
+                    "type": r.get("type", "habit"),
+                    "text": r.get("text", ""),
+                    "concept_id": r.get("concept_id", ""),
+                }
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------

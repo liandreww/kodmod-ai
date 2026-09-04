@@ -10,9 +10,11 @@ analytics, RAG store, tiap agent node terisolasi, lalu graph utuh per intent —
 rollback), `redis_client` (`flushdb`), `stub_llms`/`stub_embeddings` autouse,
 `AsyncPostgresSaver` pada DB test untuk test graph berpersisten.
 
-**Entry.** Stage 2 hijau; `docker compose -p kodmod-test up -d postgres redis llm-stub db-init`;
-`create_test_db` + `seed_curriculum` selesai. **Exit.** Semua hijau kecuali `xfail(strict)`
-yang tercatat (quiz multi-turn, `classroom_enrollment`, `rag_retrieval_node`).
+**Entry.** Stage 2 hijau; infra naik
+`docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d postgres redis llm-stub`;
+lalu di host `python -m scripts.init_test_db` (schema + seed, env test terkunci) selesai.
+**Exit.** Semua hijau kecuali `xfail(strict)` yang tercatat (quiz multi-turn,
+`classroom_enrollment`, `rag_retrieval_node`).
 
 **Lokasi.** `tests/integration/`. **Marker.** `integration`, `db`, `redis`.
 

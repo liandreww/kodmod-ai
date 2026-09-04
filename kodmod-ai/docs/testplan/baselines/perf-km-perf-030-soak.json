@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-09-03T01:00:20Z",
+  "snapshots": [
+    {
+      "db_ok": 1,
+      "rss_mb": 268.7,
+      "t": 0.5
+    },
+    {
+      "db_ok": 1,
+      "rss_mb": 268.7,
+      "t": 5.6
+    },
+    {
+      "db_ok": 1,
+      "rss_mb": 268.7,
+      "t": 10.7
+    },
+    {
+      "db_ok": 1,
+      "rss_mb": 268.7,
+      "t": 15.8
+    }
+  ],
+  "soak_error_rate": 0.0,
+  "soak_mean_ms": 181.9,
+  "soak_n": 1000,
+  "soak_p50_ms": 182.6,
+  "soak_p95_ms": 205.3,
+  "soak_seconds": 20,
+  "soak_status_counts": {
+    "200": 1000
+  }
+}

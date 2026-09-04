@@ -53,9 +53,9 @@ async def test_km_api_042_student_me(client, student_factory, auth_headers) -> N
     assert r.json()["full_name"] == "Me Myself"
 
 
-async def test_km_api_043_student_profile(client, student_factory) -> None:  # type: ignore[no-untyped-def]
-    st, _tok = await student_factory()
-    r = await client.get(f"/student/{st.id}/profile")
+async def test_km_api_043_student_profile(client, student_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
+    st, tok = await student_factory()
+    r = await client.get(f"/student/{st.id}/profile", headers=auth_headers(tok))
     assert r.status_code == 200
     body = r.json()
     assert body["id"] == str(st.id)
@@ -63,9 +63,11 @@ async def test_km_api_043_student_profile(client, student_factory) -> None:  # t
     assert body["strong_concepts"] == []  # hardcoded in handler (documented)
 
 
-async def test_km_api_044_student_profile_not_found(client) -> None:  # type: ignore[no-untyped-def]
-    r = await client.get(f"/student/{uuid.uuid4()}/profile")
-    assert r.status_code == 404
+async def test_km_api_044_student_profile_not_found(client, student_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
+    _st, tok = await student_factory()
+    # Own token, but a random target id: the owner check fires before the lookup.
+    r = await client.get(f"/student/{uuid.uuid4()}/profile", headers=auth_headers(tok))
+    assert r.status_code in {403, 404}
 
 
 @pytest.mark.known_bug(

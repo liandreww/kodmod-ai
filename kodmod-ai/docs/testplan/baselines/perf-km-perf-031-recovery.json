@@ -1,0 +1,33 @@
+{
+  "baseline": {
+    "base_error_rate": 0.0,
+    "base_mean_ms": 203.4,
+    "base_n": 15,
+    "base_p50_ms": 133.0,
+    "base_p95_ms": 366.4,
+    "base_status_counts": {
+      "200": 15
+    }
+  },
+  "recorded_at": "2026-09-03T01:00:40Z",
+  "recovered": {
+    "recovered_error_rate": 0.0,
+    "recovered_mean_ms": 115.2,
+    "recovered_n": 15,
+    "recovered_p50_ms": 120.6,
+    "recovered_p95_ms": 124.2,
+    "recovered_status_counts": {
+      "200": 15
+    }
+  },
+  "spike": {
+    "spike_error_rate": 0.0,
+    "spike_mean_ms": 957.4,
+    "spike_n": 180,
+    "spike_p50_ms": 1142.8,
+    "spike_p95_ms": 1266.7,
+    "spike_status_counts": {
+      "200": 180
+    }
+  }
+}

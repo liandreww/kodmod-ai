@@ -149,7 +149,7 @@ async def test_km_int_078_classroom_summary_roster(
     make_student, teacher_factory, concept_ids
 ) -> None:  # type: ignore[no-untyped-def]
     from analytics.aggregator import ClassroomAggregator
-    from database.models import Classroom
+    from database.models import Classroom, ClassroomEnrollment
     from database.session import async_session
 
     st = await make_student()
@@ -159,6 +159,7 @@ async def test_km_int_078_classroom_summary_roster(
         s.add(room)
         await s.flush()
         room_id = room.id
+        s.add(ClassroomEnrollment(classroom_id=room_id, student_id=st.id))
 
     out = await ClassroomAggregator().summarise(classroom_id=room_id)
     assert out.get("n_students") == 1

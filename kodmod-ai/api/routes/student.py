@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import current_student, db_session
@@ -47,7 +48,11 @@ async def create_student(
         voice_settings=payload.voice_settings or {},
     )
     session.add(student)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError as e:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "email already registered") from e
     await session.refresh(student)
     return student
 
@@ -56,8 +61,12 @@ async def create_student(
 async def get_student_profile(
     student_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
+    caller: Student = Depends(current_student),
 ) -> StudentProfileOut:
     """Return a student's extended profile: mastery, weak concepts, streak."""
+    if caller.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another student's profile")
+
     student = await session.get(Student, student_id)
     if student is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Student not found")

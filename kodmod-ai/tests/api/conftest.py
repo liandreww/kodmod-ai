@@ -1,11 +1,14 @@
-"""Stage 4 (API) fixtures — real HTTP against the containerized ``api`` service.
+"""Stage 4 (API) fixtures — real HTTP against the host ``api`` process.
 
-The ``api`` container reads the SAME Postgres (host 5433 -> container 5432), so
-seeding fixtures here must **commit** (unlike the root ``student_factory`` which
-rolls its SAVEPOINT back). Everything created is tracked and deleted on teardown.
+The host ``api`` (``python -m scripts.serve_test_api``) reads the SAME Postgres
+(``localhost:5433``) as these fixtures, so seeding here must **commit** (unlike
+the root ``student_factory`` which rolls its SAVEPOINT back). Everything created
+is tracked and deleted on teardown.
 
-Requires the stack up:
-    docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d --build api
+Requires the infra + host api up (or run via scripts/run_tests.{ps1,sh}):
+    docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d postgres redis llm-stub
+    python -m scripts.init_test_db
+    python -m scripts.serve_test_api
 """
 
 from __future__ import annotations
@@ -71,12 +74,28 @@ async def db_cleanup():  # type: ignore[no-untyped-def]
 
     from database.session import async_session, init_db
 
+    # Child tables that reference students.id without ON DELETE CASCADE in the
+    # ORM-built test schema — clear these before deleting a students row.
+    # (quiz_sessions cascades to quiz_attempts / quiz_questions on its own.)
+    _student_children = (
+        "analytics_reports",
+        "recommendations",
+        "misconceptions",
+        "mastery_scores",
+        "quiz_sessions",
+    )
+
     await init_db()
     trash: list[tuple[str, str]] = []
     yield trash
     if trash:
         async with async_session() as s:
             for table, _id in reversed(trash):
+                if table == "students":
+                    for child in _student_children:
+                        await s.execute(
+                            text(f"DELETE FROM {child} WHERE student_id = :id"), {"id": _id}
+                        )
                 await s.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": _id})
 
 

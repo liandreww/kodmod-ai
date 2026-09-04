@@ -14,7 +14,9 @@ session via the `async_session()` async context manager.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -37,13 +39,20 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _make_engine() -> AsyncEngine:
-    """Create the asyncpg engine. Tests use NullPool to avoid loop bleed.
+    """Create the asyncpg engine.
+
+    In-process pytest uses NullPool to avoid event-loop bleed between tests
+    (a pooled connection bound to a torn-down loop breaks the next test).
+    A host-run server (``scripts/serve_test_api``) also sets ``ENV=test`` but
+    has one long-lived loop, so it must keep a real pool — NullPool there means
+    a fresh asyncpg connection per checkout, which collapses under concurrency
+    (KM-PERF-003/004/010/020). Gate on "am I under pytest", not just ``ENV``.
 
     NullPool has no notion of pool sizing (every checkout opens a fresh
     connection), so `pool_size`/`max_overflow` must be omitted when it's
     selected — SQLAlchemy raises `TypeError` if they're passed alongside it.
     """
-    use_null_pool = settings.ENV == "test"
+    use_null_pool = settings.ENV == "test" and "pytest" in sys.modules
     kwargs: dict = {
         "echo": settings.DEBUG and settings.ENV == "dev",
         "pool_pre_ping": True,
@@ -70,6 +79,16 @@ async def init_db() -> None:
     except SQLAlchemyError as exc:
         logger.exception("Database connection failed at startup: %s", exc)
         raise
+    # Pre-warm the pool. A fresh asyncpg connection costs ~25 ms; without this the
+    # first concurrent request burst pays that per connection on the event loop
+    # (a p95 killer for KM-PERF-003). NullPool (pytest) has nothing to warm.
+    if not isinstance(_engine.pool, NullPool):
+        warm = settings.DB_POOL_SIZE
+        try:
+            conns = await asyncio.gather(*(_engine.connect() for _ in range(warm)))
+            await asyncio.gather(*(c.close() for c in conns))
+        except SQLAlchemyError:
+            logger.warning("Pool pre-warm skipped (could not open %d connections)", warm)
     logger.info("Database initialized (host=%s db=%s)", settings.DB_HOST, settings.DB_NAME)
 
 

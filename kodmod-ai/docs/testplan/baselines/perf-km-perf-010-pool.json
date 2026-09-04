@@ -1,0 +1,56 @@
+{
+  "knee_vu": null,
+  "recorded_at": "2026-09-03T01:00:31Z",
+  "steps": {
+    "5": {
+      "error_rate": 0.0,
+      "mean_ms": 154.8,
+      "n": 10,
+      "p50_ms": 23.9,
+      "p95_ms": 290.2,
+      "status_counts": {
+        "200": 10
+      }
+    },
+    "10": {
+      "error_rate": 0.0,
+      "mean_ms": 98.5,
+      "n": 20,
+      "p50_ms": 39.6,
+      "p95_ms": 299.5,
+      "status_counts": {
+        "200": 20
+      }
+    },
+    "20": {
+      "error_rate": 0.0,
+      "mean_ms": 101.1,
+      "n": 40,
+      "p50_ms": 66.6,
+      "p95_ms": 329.0,
+      "status_counts": {
+        "200": 40
+      }
+    },
+    "30": {
+      "error_rate": 0.0,
+      "mean_ms": 99.2,
+      "n": 60,
+      "p50_ms": 93.8,
+      "p95_ms": 144.6,
+      "status_counts": {
+        "200": 60
+      }
+    },
+    "40": {
+      "error_rate": 0.0,
+      "mean_ms": 146.5,
+      "n": 80,
+      "p50_ms": 147.1,
+      "p95_ms": 234.1,
+      "status_counts": {
+        "200": 80
+      }
+    }
+  }
+}

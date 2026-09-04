@@ -1,7 +1,7 @@
-"""Stage 5 (WebSocket) fixtures — real WS to the containerized ``api`` service.
+"""Stage 5 (WebSocket) fixtures — real WS to the host ``api`` process.
 
-Mirrors tests/api/conftest.py: committing student/teacher factories (the
-container reads the same Postgres) + a ``ws_connect`` helper built on httpx-ws.
+Mirrors tests/api/conftest.py: committing student/teacher factories (the host
+``api`` reads the same Postgres) + a ``ws_connect`` helper built on httpx-ws.
 """
 
 from __future__ import annotations
@@ -113,10 +113,10 @@ async def teacher_factory(db_cleanup):  # type: ignore[no-untyped-def]
 
 @pytest.fixture
 def ws_connect(ws_base_url):  # type: ignore[no-untyped-def]
-    """async context manager: ws_connect(token=..., raw_url=...) -> session.
+    """async context manager: ws_connect(token=..., headers=...) -> session.
 
     Raises httpx_ws.WebSocketUpgradeError if the server rejects the handshake
-    (authenticate_ws closes before accept -> HTTP 403 on the upgrade).
+    (authenticate_ws closes with 1008 before accept on bad/missing creds).
     """
 
     @contextlib.asynccontextmanager

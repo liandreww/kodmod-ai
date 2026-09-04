@@ -7,25 +7,26 @@ kontrak berbasis OpenAPI.
 **Sifat gate.** Blok. 3–6 menit.
 
 **Framework.** `httpx.AsyncClient(base_url="http://localhost:8000")` — **HTTP sungguhan ke
-container `api`** yang benar-benar berjalan (image sama dengan produksi, dibangun dari
-`docker/Dockerfile`), **bukan** import in-process/`ASGITransport`. Pytest dijalankan native
-di host (PowerShell/bash), bukan di dalam kontainer. DB+Redis diakses langsung dari host
-untuk seeding data (fixture `student_factory`/`teacher_factory`); LLM/embedding container
-`api` di-stub lewat env (`KODMOD_LLM_PROVIDER=vllm` → service `llm-stub`), bukan lewat
-`stub_llms`/`stub_embeddings` (fixture itu hanya berlaku untuk Stage 1/3 yang tak melalui
-container). `schemathesis` untuk property/contract terhadap `/openapi.json` container.
+proses `api` host** (`python -m scripts.serve_test_api` = `uvicorn api.main:app` dengan env
+test, membaca source langsung), **bukan** import in-process/`ASGITransport`. Proses terpisah
+→ tetap black-box. Pytest dijalankan native di host (PowerShell/bash). DB+Redis diakses
+langsung dari host untuk seeding data (fixture `student_factory`/`teacher_factory`);
+LLM/embedding proses `api` di-stub lewat env (`KODMOD_LLM_PROVIDER=vllm` →
+`http://localhost:8099/v1` service `llm-stub`), bukan lewat `stub_llms`/`stub_embeddings`
+(fixture itu hanya berlaku untuk Stage 1/3 yang jalan in-process). `schemathesis` untuk
+property/contract terhadap `/openapi.json`.
 
-**Entry.** Stage 3 hijau; stack app naik: `docker compose -p kodmod-test -f
-docker/docker-compose.test.yml up -d --build api` (menaikkan seluruh rantai dependency:
-postgres → db-init → redis+llm-stub → api) dan `GET /live` sudah 200.
+**Entry.** Stage 3 hijau; infra naik + host api hidup:
+`docker compose -p kodmod-test -f docker/docker-compose.test.yml up -d postgres redis llm-stub`
+→ `python -m scripts.init_test_db`
+→ `python -m scripts.serve_test_api` (atau cukup `run_tests` Stage 4) dan `GET /live` sudah 200.
 **Exit.** Semua hijau kecuali `xfail(strict)` tercatat (quiz, voice, exercise/generate,
 `sub` non-UUID). 0 temuan 5xx dari Schemathesis tanpa `xfail` bertarget.
 
 **Lokasi.** `tests/api/`. **Marker.** `api`, `db`, `redis`.
 
 **Catatan lifespan.** Lifespan (`init_db`, `AsyncPostgresSaver.setup`, `build_kodmod_graph`)
-sudah berjalan di dalam container `api` saat proses `uvicorn` start — tidak perlu di-drive
-dari test.
+sudah berjalan di proses `api` host saat `uvicorn` start — tidak perlu di-drive dari test.
 
 ---
 

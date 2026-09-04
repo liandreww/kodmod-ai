@@ -1,0 +1,11 @@
+{
+  "analytics_error_rate": 0.0,
+  "analytics_mean_ms": 414.2,
+  "analytics_n": 60,
+  "analytics_p50_ms": 352.5,
+  "analytics_p95_ms": 627.1,
+  "analytics_status_counts": {
+    "200": 60
+  },
+  "recorded_at": "2026-09-03T01:00:33Z"
+}
