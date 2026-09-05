@@ -115,7 +115,7 @@ async def test_km_int_006_extensions_enabled(db_engine) -> None:  # type: ignore
 
 
 # --------------------------------------------------------------------------- #
-# KM-INT-007 — ORM columns match reality (not schema.sql's names)
+# KM-INT-007 — the deployed columns are the ones the ORM declares
 # --------------------------------------------------------------------------- #
 async def test_km_int_007_orm_columns_match_db(db_engine) -> None:  # type: ignore[no-untyped-def]
     from database.session import async_session
@@ -137,17 +137,21 @@ async def test_km_int_007_orm_columns_match_db(db_engine) -> None:  # type: igno
 
     mastery = await cols("mastery_scores")
     assert {"mastery", "confidence", "n_attempts", "last_seen"} <= mastery
-    # schema.sql legacy names must NOT be what the DB has
+    # The old hand-written schema called these `score` / `last_practiced`.
     assert "score" not in mastery and "last_practiced" not in mastery
 
-    students = await cols("students")
+    users = await cols("users")
     assert {
+        "username",
+        "password_hash",
+        "role",
         "full_name",
+        "is_active",
         "accessibility_profile",
         "preferred_language",
-        "voice_settings",
-    } <= students
-    assert "display_name" not in students
+    } <= users
+    # There is one identity table; the split students/teachers tables are gone.
+    assert "voice_settings" not in users
 
 
 # --------------------------------------------------------------------------- #
@@ -156,23 +160,39 @@ async def test_km_int_007_orm_columns_match_db(db_engine) -> None:  # type: igno
 async def test_km_int_008_async_session_commit_and_rollback(db_engine, make_student) -> None:  # type: ignore[no-untyped-def]
     import uuid
 
-    from database.models import Student
+    from database.models import User
     from database.session import async_session
 
     sid = uuid.uuid4()
     async with async_session() as s:
-        s.add(Student(id=sid, full_name="Commit OK"))
+        s.add(
+            User(
+                id=sid,
+                username="commit-ok",
+                password_hash="x",
+                role="student",
+                full_name="Commit OK",
+            )
+        )
     async with async_session() as s:
-        assert await s.get(Student, sid) is not None
+        assert await s.get(User, sid) is not None
 
     sid2 = uuid.uuid4()
     with pytest.raises(RuntimeError):
         async with async_session() as s:
-            s.add(Student(id=sid2, full_name="Rollback"))
+            s.add(
+                User(
+                    id=sid2,
+                    username="rollback",
+                    password_hash="x",
+                    role="student",
+                    full_name="Rollback",
+                )
+            )
             await s.flush()
             raise RuntimeError("boom")
     async with async_session() as s:
-        assert await s.get(Student, sid2) is None
+        assert await s.get(User, sid2) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -181,17 +201,21 @@ async def test_km_int_008_async_session_commit_and_rollback(db_engine, make_stud
 async def test_km_int_009_get_db_generator(db_engine, make_student) -> None:  # type: ignore[no-untyped-def]
     import uuid
 
-    from database.models import Student
+    from database.models import User
     from database.session import async_session, get_db
 
     sid = uuid.uuid4()
     gen = get_db()
     s = await gen.__anext__()
-    s.add(Student(id=sid, full_name="via get_db"))
+    s.add(
+        User(
+            id=sid, username="via-get-db", password_hash="x", role="student", full_name="via get_db"
+        )
+    )
     with pytest.raises(StopAsyncIteration):
         await gen.__anext__()  # clean close -> commit
     async with async_session() as chk:
-        assert await chk.get(Student, sid) is not None
+        assert await chk.get(User, sid) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -213,18 +237,22 @@ async def test_km_int_010_close_db_resets_globals(db_engine, monkeypatch) -> Non
 
 
 # --------------------------------------------------------------------------- #
-# KM-INT-011 — the test schema is NOT bootstrapped from schema.sql
+# KM-INT-011 — no compose file bootstraps a hand-written SQL schema
 # --------------------------------------------------------------------------- #
-def test_km_int_011_schema_sql_is_deprecated_for_tests() -> None:
+def test_km_int_011_no_sql_schema_bootstrap() -> None:
+    """`database/models.py` is the only schema. Nothing may deploy SQL beside it.
+
+    A second, drifting source of truth is exactly the failure this codebase
+    already had: `schema.sql` and the ORM disagreed on half the columns.
+    """
     from pathlib import Path
 
-    compose = (
-        Path(__file__).resolve().parents[2] / "docker" / "docker-compose.test.yml"
-    ).read_text(encoding="utf-8")
-    # schema.sql may only appear inside an explanatory comment, never as a mount
-    # into the postgres init dir. The test schema comes from scripts.create_test_db.
-    for line in compose.splitlines():
-        code = line.split("#", 1)[0]
-        assert "schema.sql" not in code, f"schema.sql wired into compose: {line!r}"
-    assert "docker-entrypoint-initdb.d" not in compose
-    assert "create_test_db" in compose
+    root = Path(__file__).resolve().parents[2]
+    assert not (root / "database" / "schema.sql").exists()
+
+    for name in ("docker-compose.yml", "docker-compose.test.yml", "docker-compose.prod.yml"):
+        compose = (root / "docker" / name).read_text(encoding="utf-8")
+        for line in compose.splitlines():
+            code = line.split("#", 1)[0]
+            assert "schema.sql" not in code, f"{name}: schema.sql wired into compose: {line!r}"
+            assert "docker-entrypoint-initdb.d" not in code, f"{name}: init-dir SQL mount"

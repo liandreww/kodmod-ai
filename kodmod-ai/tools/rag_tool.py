@@ -14,9 +14,9 @@ Pipeline
 
 Configuration
 -------------
-* Vector store: pgvector by default, Qdrant when KODMOD_VECTOR_STORE=qdrant.
-* Embedding model: BGE-M3 multilingual (excellent for Indonesian + English).
-* Reranker: BGE-reranker-v2-m3 (cross-encoder).
+* Vector store: pgvector.
+* Embedding model: OpenAI `text-embedding-3-small` (see `settings.EMBEDDING_MODEL`).
+* Reranker: BGE-reranker-v2-m3 (cross-encoder, runs locally).
 
 Two retrieval modes
 -------------------
@@ -27,11 +27,11 @@ Two retrieval modes
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from langchain_core.tools import Tool
 
+from config.settings import settings
 from graphs.state import RetrievedDoc
 from rag.embeddings import embed_text
 from rag.reranker import rerank
@@ -49,11 +49,6 @@ class RAGTool:
 
     # -----------------------------------------------------------------
     def _build_store(self):
-        backend = os.getenv("KODMOD_VECTOR_STORE", "pgvector")
-        if backend == "qdrant":
-            from rag.stores.qdrant_store import QdrantStore
-
-            return QdrantStore()
         from rag.stores.pgvector_store import PgVectorStore
 
         return PgVectorStore()
@@ -83,8 +78,13 @@ class RAGTool:
         if not candidates:
             return []
 
-        # 3. Cross-encoder rerank for precision
-        reranked = await rerank(query, candidates, top_k=k)
+        # 3. Cross-encoder rerank for precision (optional — the bi-encoder
+        # order from the vector search is already decent, so this can be
+        # switched off when the extra local model isn't worth the weight).
+        if settings.RAG_RERANK_ENABLED:
+            reranked = await rerank(query, candidates, top_k=k)
+        else:
+            reranked = candidates[:k]
 
         log.info(
             "RAG: query='%s' retrieved=%d returned=%d", query[:50], len(candidates), len(reranked)
@@ -116,23 +116,3 @@ class RAGTool:
             ),
             coroutine=_arun,
         )
-
-
-# ---------------------------------------------------------------------------
-# LangGraph node — used as 'rag_retrieval' in the main graph
-# ---------------------------------------------------------------------------
-
-
-async def rag_retrieval_node(state) -> dict:
-    """LangGraph node wrapper around RAGTool.retrieve."""
-    rag = RAGTool()
-    query = state.get("user_input", "") or state.get("transcribed_text", "")
-    concept_id = state.get("current_concept_id")
-    filters = {"concept_id": concept_id} if concept_id else None
-
-    docs = await rag.retrieve(query=query, filters=filters)
-    return {
-        "retrieved_docs": list(docs),
-        "next_action": "tutor",
-        "last_node": "rag_retrieval",
-    }

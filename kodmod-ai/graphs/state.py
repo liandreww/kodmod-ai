@@ -10,8 +10,9 @@ Design notes
 * `messages` uses LangGraph's `add_messages` reducer so chat history accumulates
   rather than being overwritten.
 * `mastery_scores` is a sparse dict keyed by concept_id; updates merge.
-* `audio_response_path` and `audio_input_path` are S3/MinIO URIs, not bytes,
-  to keep the state checkpoint small.
+* Text in, text out. Speech recognition and synthesis both live in the browser,
+  so `user_input` is the only inbound text field and `accessible_response` is
+  the only outbound one.
 * Every field has an explicit default so partial state updates never crash a
   downstream node.
 """
@@ -56,7 +57,7 @@ NextAction = Literal[
     "generate_analytics",
     "recommend",
     "accessibility_polish",
-    "speak",
+    "respond",
     "end",
     "interrupt_human",
 ]
@@ -109,7 +110,6 @@ class RetrievedDoc(TypedDict, total=False):
 class LearningProfile(TypedDict, total=False):
     learning_style: Literal["auditory", "kinesthetic", "mixed"]
     preferred_pace: Literal["slow", "normal", "fast"]
-    preferred_voice: str
     language: str
     accessibility: dict[str, Any]  # screen_reader, contrast, font_scale, etc.
 
@@ -139,11 +139,8 @@ class KODMODState(TypedDict, total=False):
     teacher_id: str | None
     request_id: str
 
-    # ---- Voice I/O ---------------------------------------------------------
-    audio_input_path: str  # URI of inbound audio chunk
-    transcribed_text: str  # output of STT
-    user_input: str  # canonicalized text (post-cleaning)
-    audio_response_path: str  # URI of TTS output
+    # ---- Turn I/O ----------------------------------------------------------
+    user_input: str  # the student's utterance, already text
     detected_language: str
 
     # ---- Routing & intent --------------------------------------------------
@@ -155,17 +152,19 @@ class KODMODState(TypedDict, total=False):
     # ---- Tutoring context --------------------------------------------------
     current_topic: str
     current_concept_id: str
+    subject_id: str | None  # scopes RAG retrieval to one subject
     current_difficulty: DifficultyLevel
     tutoring_context: list[TutoringTurn]
     retrieved_docs: list[RetrievedDoc]
     generated_response: str  # raw LLM output before accessibility pass
-    accessible_response: str  # post-accessibility-agent text for TTS
+    accessible_response: str  # post-accessibility-agent text; this is what ships
 
     # ---- Quiz state --------------------------------------------------------
     quiz_session_id: str
     quiz_n_questions: int  # explicit length request (0 = let the agent decide)
     quiz_questions: list[QuizQuestion]
     current_question_index: int
+    current_question_attempts: int  # retries on the current question this session
     quiz_question: QuizQuestion  # the question currently being asked
     student_answer: str
     quiz_attempts: list[QuizAttempt]
@@ -198,28 +197,24 @@ class KODMODState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 
-def build_learning_profile(student: Any) -> LearningProfile:
-    """Build a ``LearningProfile`` from a ``Student`` ORM row or ``StudentOut`` schema.
+def build_learning_profile(user: Any) -> LearningProfile:
+    """Build a ``LearningProfile`` from a ``User`` ORM row or ``UserOut`` schema.
 
-    Duck-typed on purpose: routes hand us the Pydantic ``StudentOut`` while the
+    Duck-typed on purpose: routes hand us the Pydantic ``UserOut`` while the
     WebSocket handler has the ORM object. Only keys we actually have data for are
     set (``LearningProfile`` is ``total=False``); consumers read via ``.get(...)``.
     """
-    vs = getattr(student, "voice_settings", None) or {}
-    profile: LearningProfile = {
-        "language": str(getattr(student, "preferred_language", None) or "id"),
-        "accessibility": {"profile": getattr(student, "accessibility_profile", None) or "blind"},
-    }
-    voice = vs.get("preferred_voice") or vs.get("voice")
-    if voice:
-        profile["preferred_voice"] = str(voice)
-    return profile
+    return LearningProfile(
+        language=str(getattr(user, "preferred_language", None) or "id"),
+        accessibility={"profile": getattr(user, "accessibility_profile", None) or "blind"},
+    )
 
 
 def initial_state(
     session_id: str,
     student_id: str,
-    audio_input_path: str | None = None,
+    user_input: str = "",
+    subject_id: str | None = None,
     teacher_id: str | None = None,
 ) -> KODMODState:
     """Return a clean state object for a new turn."""
@@ -231,10 +226,7 @@ def initial_state(
         student_id=student_id,
         teacher_id=teacher_id,
         request_id=str(uuid4()),
-        audio_input_path=audio_input_path or "",
-        transcribed_text="",
-        user_input="",
-        audio_response_path="",
+        user_input=user_input,
         detected_language="id",
         intent="unknown",
         intent_confidence=0.0,
@@ -242,6 +234,7 @@ def initial_state(
         interrupt_reason=None,
         current_topic="",
         current_concept_id="",
+        subject_id=subject_id,
         current_difficulty="medium",
         tutoring_context=[],
         retrieved_docs=[],
@@ -251,6 +244,7 @@ def initial_state(
         quiz_n_questions=0,
         quiz_questions=[],
         current_question_index=0,
+        current_question_attempts=0,
         quiz_question={},
         student_answer="",
         quiz_attempts=[],

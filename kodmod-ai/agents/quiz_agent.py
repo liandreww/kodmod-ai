@@ -23,7 +23,7 @@ from typing import Any
 from uuid import uuid4
 
 from graphs.state import KODMODState, QuizQuestion
-from tools.llm_client import get_quiz_llm
+from tools.llm_client import get_quiz_llm, language_instruction
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 ASK_PROMPT = """\
 You are the Quiz Host for KODMOD AI. The student is visually impaired and
-will hear this question via TTS.
+will most likely hear this question read aloud.
 
 Rules for spoken questions:
 - One sentence stem, then options (if MCQ) prefixed by 'A,', 'B,', 'C,', 'D,'.
@@ -83,17 +83,23 @@ async def quiz_node(state: KODMODState) -> dict[str, Any]:
     llm = get_quiz_llm()
     response = await llm.ainvoke(
         [
-            {"role": "system", "content": ASK_PROMPT},
+            {"role": "system", "content": ASK_PROMPT + language_instruction()},
             {"role": "user", "content": user_block},
         ]
     )
     spoken_question = response.content if hasattr(response, "content") else str(response)
 
-    # Prepend a tiny intro for the FIRST question of the session
+    # Prepend a tiny intro for the FIRST question of the session; for later
+    # questions, carry the previous answer's feedback forward so the student
+    # hears it before the next question, instead of losing it.
     if idx == 0:
         spoken_question = (
             f"Baik, kita mulai kuis. Ada {total} soal. Soal pertama: " + spoken_question
         )
+    else:
+        feedback = (state.get("generated_response") or "").strip()
+        if feedback:
+            spoken_question = f"{feedback} Soal berikutnya: {spoken_question}"
 
     log.info(
         "Asking question %d/%d (concept=%s, difficulty=%s)",
@@ -145,7 +151,7 @@ async def mini_quiz_node(state: KODMODState) -> dict[str, Any]:
     llm = get_quiz_llm()
     response = await llm.ainvoke(
         [
-            {"role": "system", "content": MINI_PROMPT},
+            {"role": "system", "content": MINI_PROMPT + language_instruction()},
             {
                 "role": "user",
                 "content": (

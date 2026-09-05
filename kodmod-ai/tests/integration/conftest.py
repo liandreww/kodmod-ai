@@ -28,10 +28,9 @@ _VOLATILE = [
     "analytics_reports",
     "curriculum_chunks",
     "exercises",
-    "classroom_enrollment",
-    "students",
-    "teachers",
-    "classrooms",
+    "documents",
+    "invitation_codes",
+    "users",
 ]
 
 
@@ -84,20 +83,26 @@ async def concept_ids(db_engine):  # type: ignore[no-untyped-def]
 
 @pytest.fixture
 async def make_student(clean_db):  # type: ignore[no-untyped-def]
-    """Factory: insert a Student via its own committed session, return the ORM row."""
-    from database.models import Student
+    """Factory: insert a student `users` row in its own committed session."""
+    from api.security import hash_password
+    from database.models import User
     from database.session import async_session
+    from tests.conftest import TEST_PASSWORD
 
     async def _make(**over):  # type: ignore[no-untyped-def]
+        uid = over.pop("id", uuid.uuid4())
         data = dict(
-            id=over.pop("id", uuid.uuid4()),
+            id=uid,
+            username=over.pop("username", f"siswa-{uid.hex[:8]}"),
+            password_hash=hash_password(TEST_PASSWORD),
+            role="student",
             full_name=over.pop("full_name", "Siswa Uji"),
             accessibility_profile=over.pop("accessibility_profile", "blind"),
             preferred_language=over.pop("preferred_language", "id"),
         )
         data.update(over)
         async with async_session() as s:
-            row = Student(**data)
+            row = User(**data)
             s.add(row)
             await s.flush()
             s.expunge(row)

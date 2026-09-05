@@ -3,25 +3,30 @@ KODMOD AI — FastAPI Application Entry
 ======================================
 
 Mounts:
-  /voice/*       — voice chat (REST + WebSocket)
+  /auth/*        — register, log in, own account
+  /chat/*        — conversation turns and history (REST)
+  /ws/chat       — the streaming conversation socket
   /quiz/*        — quiz session management
-  /student/*     — student profile + dashboard
-  /analytics/*   — student & teacher analytics
+  /student/*     — the student's own learning profile
+  /teacher/*     — roster, per-student progress, transcripts
+  /admin/*       — accounts and invitation codes
+  /subjects/*    — subjects, concepts, curriculum document uploads
+  /documents/*   — deleting an uploaded document
+  /analytics/*   — student and cohort analytics
   /exercise/*    — exercise generation
-  /content/*     — curriculum retrieval
-  /health        — liveness + readiness
+  /content/*     — curriculum lookup and retrieval
+  /live, /ready, /version
   /metrics       — Prometheus
 
 Lifespan
 --------
-On startup: builds the LangGraph, opens DB pools, warms up models.
-On shutdown: drains in-flight WebSockets and closes pools cleanly.
+On startup: opens DB pools and builds the LangGraph.
+On shutdown: closes the checkpointer pool and the DB pools cleanly.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,8 +38,20 @@ from psycopg import AsyncConnection
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from api.routes import analytics, content, exercise, health, quiz, student, voice
-from api.websockets import voice_stream
+from api.routes import (
+    admin,
+    analytics,
+    auth,
+    chat,
+    content,
+    exercise,
+    health,
+    quiz,
+    student,
+    subjects,
+    teacher,
+)
+from api.websockets import chat_stream
 from config.logging import configure_logging
 from config.settings import settings
 from database.session import close_db, init_db
@@ -49,22 +66,15 @@ async def lifespan(app: FastAPI):
     configure_logging()
     log.info("Starting KODMOD AI API")
 
-    # 1. DB pools
     await init_db()
 
-    # 2. LangGraph checkpointer + graph.
-    # AsyncPostgresSaver serialises every checkpoint op on one process-wide
-    # asyncio.Lock (langgraph internal), so under concurrency the graph turns
-    # run strictly one at a time — fine for prod, fatal for the load probe
-    # (KM-PERF-020). A load run sets KODMOD_CHECKPOINTER=memory to swap in the
-    # lock-free in-memory saver; everything else keeps Postgres persistence.
     app.state.checkpointer_pool = None
     checkpointer: BaseCheckpointSaver
-    if os.getenv("KODMOD_CHECKPOINTER", "postgres").lower() == "memory":
+    if settings.CHECKPOINTER == "memory":
         from langgraph.checkpoint.memory import MemorySaver
 
         checkpointer = MemorySaver()
-        log.info("Checkpointer: in-memory (KODMOD_CHECKPOINTER=memory)")
+        log.info("Checkpointer: in-memory")
     else:
         cp_pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
             settings.LANGGRAPH_DB_URI,
@@ -81,7 +91,6 @@ async def lifespan(app: FastAPI):
     log.info("KODMOD AI ready (env=%s)", settings.ENV)
     yield
 
-    # Shutdown
     log.info("Shutting down KODMOD AI")
     if app.state.checkpointer_pool is not None:
         await app.state.checkpointer_pool.close()
@@ -90,14 +99,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="KODMOD AI",
-    version="0.1.0",
-    description="Voice-first agentic learning assistant for visually impaired students.",
+    version=settings.APP_VERSION,
+    description="Agentic learning assistant for visually impaired students.",
     lifespan=lifespan,
 )
 
 
 # ---- Middleware -----------------------------------------------------------
-
+# Credentials are allowed, so the origin list must be explicit. A "*" here
+# would be rejected by every browser anyway.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ALLOW_ORIGINS,
@@ -110,13 +120,18 @@ app.add_middleware(
 # ---- Routers --------------------------------------------------------------
 
 app.include_router(health.router)
-app.include_router(voice.router, prefix="/voice", tags=["voice"])
+app.include_router(auth.router, prefix="/auth")
+app.include_router(chat.router, prefix="/chat")
 app.include_router(quiz.router, prefix="/quiz", tags=["quiz"])
-app.include_router(student.router, prefix="/student", tags=["student"])
-app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+app.include_router(student.router, prefix="/student")
+app.include_router(teacher.router, prefix="/teacher")
+app.include_router(admin.router, prefix="/admin")
+app.include_router(subjects.router, prefix="/subjects")
+app.include_router(subjects.documents_router, prefix="/documents")
+app.include_router(analytics.router, prefix="/analytics")
 app.include_router(exercise.router, prefix="/exercise", tags=["exercise"])
 app.include_router(content.router, prefix="/content", tags=["content"])
-app.include_router(voice_stream.router, prefix="/ws", tags=["websocket"])
+app.include_router(chat_stream.router, prefix="/ws", tags=["websocket"])
 
 
 # ---- Prometheus -----------------------------------------------------------

@@ -31,7 +31,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from tools.llm_client import get_tutor_llm
+from tools.llm_client import get_tutor_llm, language_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ async def describe_image(
         ]
         resp = await llm.ainvoke(
             [
-                SystemMessage(content=_VISION_SYSTEM),
+                SystemMessage(content=_VISION_SYSTEM + language_instruction()),
                 HumanMessage(content=user_content),
             ]
         )

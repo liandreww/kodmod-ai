@@ -28,10 +28,8 @@ BASE_URL = os.environ.get("KODMOD_API_BASE_URL", "http://localhost:8000")
 _EXCLUDE = {
     ("POST", "/quiz/start"),
     ("POST", "/quiz/submit"),
-    ("POST", "/voice/text"),
-    ("POST", "/voice/chat"),
     ("POST", "/exercise/generate"),
-    ("POST", "/student"),
+    ("POST", "/auth/register"),
 }
 
 try:

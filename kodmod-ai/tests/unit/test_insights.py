@@ -1,6 +1,6 @@
 """KM-UNIT-110..123 — rule-based insight generation.
 
-Covers analytics/insights.py (student/teacher/classroom rule engines + the
+Covers analytics/insights.py (student/teacher/cohort rule engines + the
 `use_llm` switch) and analytics/aggregator.py::_window_start.
 
 Spec: docs/testplan/01-unit.md §8.
@@ -16,7 +16,7 @@ from analytics.aggregator import _window_start
 from analytics.insights import (
     _format_concept_list,
     _pct,
-    generate_classroom_alerts,
+    generate_cohort_alerts,
     generate_insights,
     generate_student_spoken_summary,
     generate_teacher_summary,
@@ -51,14 +51,13 @@ def test_format_concept_list_caps_at_n() -> None:  # KM-UNIT-111
 
 
 def _days_ago(dt: datetime) -> float:
-    now = datetime.now(UTC).replace(tzinfo=None)  # _window_start returns naive UTC
-    return (now - dt).total_seconds() / 86400
+    return (datetime.now(UTC) - dt).total_seconds() / 86400
 
 
 @pytest.mark.parametrize(
     "window,check",
     [
-        ("today", lambda d: d is not None and d.hour == 0 and d.minute == 0),
+        ("today", lambda d: d is not None and d.hour == 0 and d.minute == 0 and d.tzinfo is UTC),
         ("week", lambda d: d is not None and abs(_days_ago(d) - 7) <= 1),
         ("month", lambda d: d is not None and abs(_days_ago(d) - 30) <= 1),
         ("all", lambda d: d is None),
@@ -119,16 +118,20 @@ def test_teacher_alert_high_mastery() -> None:  # KM-UNIT-119
     assert any(a["level"] == "success" for a in out["alerts"])
 
 
-# ------------------------------------------------ classroom-level alerts --
-def test_classroom_alert_weak_concept() -> None:  # KM-UNIT-120
-    out = generate_classroom_alerts(
-        {"class_weak_concepts": [{"concept_name": "Pecahan", "avg_mastery": 0.4, "n_students": 10}]}
+# --------------------------------------------------- cohort-level alerts --
+def test_cohort_alert_weak_concept() -> None:  # KM-UNIT-120
+    out = generate_cohort_alerts(
+        {
+            "cohort_weak_concepts": [
+                {"concept_name": "Pecahan", "avg_mastery": 0.4, "n_students": 10}
+            ]
+        }
     )
     assert any(a["level"] == "warning" for a in out)
 
 
-def test_classroom_alert_low_engagement() -> None:  # KM-UNIT-121
-    out = generate_classroom_alerts({"avg_engagement_index": 0.2, "class_weak_concepts": []})
+def test_cohort_alert_low_engagement() -> None:  # KM-UNIT-121
+    out = generate_cohort_alerts({"avg_engagement_index": 0.2, "cohort_weak_concepts": []})
     assert any(a["level"] == "info" for a in out)
 
 

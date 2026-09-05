@@ -191,6 +191,7 @@ async def update_student_model_node(state) -> dict[str, Any]:
                         "quiz_session_id": state.get("quiz_session_id", ""),
                         "quiz_questions": questions,
                         "current_question_index": new_index,
+                        "current_question_attempts": 0,
                         "quiz_question": questions[new_index],
                         "quiz_attempts": attempts,
                         "cumulative_quiz_score": state.get("cumulative_quiz_score", 0.0),
@@ -202,6 +203,7 @@ async def update_student_model_node(state) -> dict[str, Any]:
     return {
         "mastery_scores": await model.mastery_scores(),
         "current_question_index": new_index,
+        "current_question_attempts": 0,  # reset for the next question
         "next_action": "generate_analytics",
         "last_node": "update_student_model",
     }

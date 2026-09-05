@@ -141,33 +141,34 @@ def test_km_int_074_window_start_all_windows() -> None:
     assert 29 <= (now - month).days <= 30
 
 
-@pytest.mark.known_bug(
-    "#20 — ClassroomAggregator.summarise queries table classroom_enrollment, which exists "
-    "only in schema.sql and is not in the ORM / test schema"
-)
-async def test_km_int_078_classroom_summary_roster(
-    make_student, teacher_factory, concept_ids
-) -> None:  # type: ignore[no-untyped-def]
-    from analytics.aggregator import ClassroomAggregator
-    from database.models import Classroom, ClassroomEnrollment
-    from database.session import async_session
+async def test_km_int_078_cohort_summary_covers_every_student(make_student, concept_ids) -> None:  # type: ignore[no-untyped-def]
+    """There is no roster to join: every active student is in the cohort."""
+    from analytics.aggregator import CohortAggregator
 
     st = await make_student()
     await _seed_activity(st.id, concept_ids["pecahan"])
-    async with async_session() as s:
-        room = Classroom(name="Kelas 7A")
-        s.add(room)
-        await s.flush()
-        room_id = room.id
-        s.add(ClassroomEnrollment(classroom_id=room_id, student_id=st.id))
 
-    out = await ClassroomAggregator().summarise(classroom_id=room_id)
-    assert out.get("n_students") == 1
-    assert "class_weak_concepts" in out
+    out = await CohortAggregator().summarise()
+    assert out["n_students"] >= 1
+    assert "cohort_weak_concepts" in out
+    assert str(st.id) in {row["student_id"] for row in out["students"]}
 
 
-async def test_km_int_079_classroom_not_found() -> None:
-    from analytics.aggregator import ClassroomAggregator
+async def test_km_int_079_cohort_summary_with_no_students_is_empty(clean_db) -> None:  # type: ignore[no-untyped-def]
+    """An empty cohort returns a well-formed zero, not an error or a crash."""
+    from analytics.aggregator import CohortAggregator
 
-    out = await ClassroomAggregator().summarise(classroom_id=uuid.uuid4())
-    assert out == {"error": "classroom_not_found"}
+    out = await CohortAggregator().summarise()
+    assert out["n_students"] == 0
+    assert out["students"] == []
+
+
+async def test_km_int_080_cohort_excludes_disabled_accounts(make_student, concept_ids) -> None:  # type: ignore[no-untyped-def]
+    """A disabled student must drop out of the teacher's roster."""
+    from analytics.aggregator import CohortAggregator
+
+    st = await make_student(is_active=False)
+    await _seed_activity(st.id, concept_ids["pecahan"])
+
+    out = await CohortAggregator().summarise()
+    assert str(st.id) not in {row["student_id"] for row in out["students"]}

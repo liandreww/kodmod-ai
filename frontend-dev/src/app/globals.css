@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   KODMOD AI design tokens
+
+   The brand is E4F9F5 / 30E3CA / 11999E / 40514E. Two of those cannot legally
+   carry small text: #30E3CA sits at 1.7:1 on white and #11999E at 3.5:1, both
+   below the 4.5:1 floor. Since a large share of this product's users read with
+   low vision, that floor is not negotiable, so one derived shade (#0B6E72,
+   6.1:1) carries every piece of text that sits on a coloured ground, and
+   #30E3CA is reserved for state: recording, selected, focused.
+
+   No gradients anywhere. Flat fills only.
+--------------------------------------------------------------------------- */
+
+:root {
+  --canvas: #e4f9f5;
+  --surface: #ffffff;
+  --surface-sunken: #f2fbf9;
+  --ink: #40514e;
+  --ink-soft: #5f706c;
+  --line: #c7e8e2;
+  --line-strong: #a9d9d1;
+  --brand: #11999e;
+  --brand-deep: #0b6e72;
+  --brand-wash: #d5f2ee;
+  --accent: #30e3ca;
+  --danger: #a6362c;
+  --danger-wash: #fbe9e7;
+  --warning: #8a5a12;
+  --warning-wash: #fdf1dc;
+  --success: #0b6e72;
+
+  --radius: 10px;
+  --radius-lg: 16px;
+
+  --font-sans: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --canvas: #1c2624;
+  --surface: #26332f;
+  --surface-sunken: #202b28;
+  --ink: #e4f9f5;
+  --ink-soft: #a4c1ba;
+  --line: #35443f;
+  --line-strong: #475953;
+  --brand: #30e3ca;
+  --brand-deep: #30e3ca;
+  --brand-wash: #1f302d;
+  --accent: #30e3ca;
+  --danger: #f2a99f;
+  --danger-wash: #3a2724;
+  --warning: #e8c07a;
+  --warning-wash: #362d1c;
+  --success: #30e3ca;
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-sunken: var(--surface-sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-brand: var(--brand);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-wash: var(--brand-wash);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-danger-wash: var(--danger-wash);
+  --color-warning: var(--warning);
+  --color-warning-wash: var(--warning-wash);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --radius-card: var(--radius);
+  --radius-panel: var(--radius-lg);
+}
+
+* {
+  border-color: var(--line);
+}
+
+html {
+  background: var(--canvas);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Every interactive element gets the same unmistakable ring. There is no
+   `outline: none` anywhere in this codebase. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--accent);
+  color: #16211f;
+}
+
+/* The reader jumps straight to the composer, which is where the work happens. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0.75rem 1.25rem;
+  border: 2px solid var(--brand-deep);
+  border-radius: var(--radius);
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  70% { transform: scale(1.7); opacity: 0; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.animate-rise {
+  animation: rise 220ms ease-out;
+}
+
+.recording-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 3px solid var(--accent);
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .recording-ring::after {
+    animation: none;
+    opacity: 0.55;
+  }
+}

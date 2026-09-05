@@ -9,27 +9,27 @@ This module assembles the four clusters into a single StateGraph:
     Cluster 3 — Content & Exercise     (problem_generator, rag_retrieval)
     Cluster 4 — Analytics & Reporting  (analytics_node, recommendation_node)
 
-Flow (matches the supplied cluster diagrams)
---------------------------------------------
-    speech_in → STT → intent_router ─┬─► tutoring ─► RAG ─► accessibility ─► TTS
-                                     ├─► quiz_subgraph (Problem-Gen → Ask → STT
-                                     │                  → Score → Analyze
-                                     │                  → Update Student Model)
-                                     ├─► analytics_node ─► recommendation_node
-                                     └─► help / repeat / stop
+Flow
+----
+    text_in → intent_router ─┬─► RAG → tutoring → accessibility
+                             ├─► quiz cluster (Problem-Gen → Ask → Score
+                             │                 → Analyze → Update Student Model)
+                             ├─► analytics_node → recommendation_node
+                             └─► stop
+
+The turn is text in, text out. Speech recognition and synthesis both happen in
+the browser, so no node in this graph touches audio. `accessibility` is the
+single terminal node for every path that produces something to say.
 
 Persistence
 -----------
-* `AsyncPostgresSaver` writes a checkpoint after every node, so:
-  - Sessions survive process restarts
-  - Human-in-the-loop interrupts work
-  - LangSmith traces are aligned with stored state
+* `AsyncPostgresSaver` writes a checkpoint after every node, so sessions
+  survive process restarts and LangSmith traces align with stored state.
 
 Streaming
 ---------
 * The graph is invoked with `astream_events` so the FastAPI WebSocket can
-  forward partial TTS audio as soon as the tutoring agent emits its first
-  tokens.
+  forward tutor tokens the moment they are produced.
 """
 
 from __future__ import annotations
@@ -54,8 +54,6 @@ from analytics.student_model import update_student_model_node
 from config.settings import settings
 from graphs.state import KODMODState
 from rag.retriever import rag_retrieval_node
-from voice.stt import stt_node
-from voice.tts import tts_node
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +90,7 @@ def route_after_intent(state: KODMODState) -> str:
     if intent in ("repeat", "clarification"):
         return "tutoring"
     if intent == "stop":
-        return "end_speak"
+        return "end"
     return "tutoring"  # safe default — explain rather than fail
 
 
@@ -101,10 +99,16 @@ def route_after_scoring(state: KODMODState) -> str:
     Mirrors the Yes/No diamond after Scoring Agent in the Quiz cluster diagram.
     Yes (correct enough)  → update student model → analytics
     No (needs help)       → tutoring (remediation) → re-quiz
+
+    A low score alone never blocks the quiz forever: once
+    `current_question_attempts` reaches `QUIZ_MAX_ATTEMPTS_PER_QUESTION`, this
+    forces the same "pass" branch regardless of score, so a question the
+    student can't clear in time still lets the quiz move on.
     """
     score = state.get("quiz_score", 0.0)
     threshold = settings.QUIZ_PASS_THRESHOLD
-    if score >= threshold:
+    attempts = state.get("current_question_attempts", 0)
+    if score >= threshold or attempts >= settings.QUIZ_MAX_ATTEMPTS_PER_QUESTION:
         return "update_student_model"
     return "tutoring"  # remediation loop
 
@@ -124,20 +128,20 @@ def route_after_tutoring(state: KODMODState) -> str:
     return "reflection"
 
 
-def route_after_analyzer(state: KODMODState) -> str:
+def route_after_student_model(state: KODMODState) -> str:
     """After the student model update, decide whether the quiz is finished.
 
     ``update_student_model_node`` has already advanced ``current_question_index``,
     so ``idx`` here points at the *next* unanswered question. When the quiz is
-    exhausted we push to the analytics cluster; otherwise the answer turn ends
-    and the next question is asked when the student's following utterance
-    re-enters the graph.
+    exhausted we push to the analyzer + analytics cluster for the closing
+    summary; otherwise we go straight back to ``quiz_ask`` so the next question
+    is spoken within this same turn.
     """
     questions = state.get("quiz_questions", [])
     idx = state.get("current_question_index", 0)
     if idx >= len(questions):
-        return "analytics"  # quiz finished → push to analytics cluster
-    return "end"  # more questions remain → end this turn
+        return "quiz_analyzer"  # quiz finished → full session analysis
+    return "quiz_ask"  # more questions remain → ask the next one now
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +164,6 @@ async def build_kodmod_graph(
     graph = StateGraph(KODMODState)
 
     # --- Cluster 1: Practices & Tutoring -----------------------------------
-    graph.add_node("stt", stt_node)
     graph.add_node("intent_router", intent_router_node)
     graph.add_node("rag_retrieval", rag_retrieval_node)
     graph.add_node("tutoring", tutoring_node)
@@ -180,11 +183,9 @@ async def build_kodmod_graph(
     # --- Cross-cutting -----------------------------------------------------
     graph.add_node("accessibility", accessibility_node)
     graph.add_node("reflection", reflection_node)
-    graph.add_node("tts", tts_node)
 
     # ---- Edges ------------------------------------------------------------
-    graph.add_edge(START, "stt")
-    graph.add_edge("stt", "intent_router")
+    graph.add_edge(START, "intent_router")
 
     graph.add_conditional_edges(
         "intent_router",
@@ -195,7 +196,7 @@ async def build_kodmod_graph(
             "scoring": "scoring",
             "analytics": "analytics",
             "tutoring": "tutoring",
-            "end_speak": "tts",
+            "end": END,
         },
     )
 
@@ -210,20 +211,21 @@ async def build_kodmod_graph(
         },
     )
     graph.add_edge("reflection", "accessibility")
-    graph.add_edge("accessibility", "tts")
 
     # Mini-quiz path (inside tutoring cluster, see Practices diagram)
     graph.add_edge("mini_quiz", "scoring")
 
     # Quiz cluster path
     graph.add_edge("problem_generator", "quiz_ask")
-    graph.add_edge("quiz_ask", "tts")  # speak the question
-    # NOTE: when student answers, a NEW graph invocation re-enters at "stt"
-    # and the intent router recognizes "quiz_in_progress" → routes to scoring.
+    graph.add_edge("quiz_ask", "accessibility")  # polish the question, then deliver
+    # NOTE: when the student answers, a NEW graph invocation re-enters at
+    # "intent_router", which recognizes "quiz_in_progress" → routes to scoring.
+    # If more questions remain, THIS SAME turn loops back to "quiz_ask" below
+    # (via update_student_model → route_after_student_model) so the next
+    # question is spoken immediately, rather than waiting on another utterance.
 
-    graph.add_edge("scoring", "quiz_analyzer")
     graph.add_conditional_edges(
-        "quiz_analyzer",
+        "scoring",
         route_after_scoring,  # Yes / No diamond
         {
             "update_student_model": "update_student_model",
@@ -232,28 +234,25 @@ async def build_kodmod_graph(
     )
     graph.add_conditional_edges(
         "update_student_model",
-        route_after_analyzer,
+        route_after_student_model,
         {
-            "analytics": "analytics",
-            "end": END,
+            "quiz_ask": "quiz_ask",
+            "quiz_analyzer": "quiz_analyzer",
         },
     )
+    graph.add_edge("quiz_analyzer", "analytics")
 
     # Analytics cluster
     graph.add_edge("analytics", "recommendation")
     graph.add_edge("recommendation", "accessibility")
 
-    # Final
-    graph.add_edge("tts", END)
+    # Final — every speaking path converges here.
+    graph.add_edge("accessibility", END)
 
     # ---- Compile ---------------------------------------------------------
-    compiled = graph.compile(
-        checkpointer=checkpointer,
-        # Allow pausing before tutoring for sensitive content review
-        interrupt_before=[],
-        # The reflection agent may decide to ask for human review
-        interrupt_after=["reflection"] if checkpointer else [],
-    )
+    # No interrupts: reflection runs as an inline quality gate rather than a
+    # human-in-the-loop pause, so a turn always completes in one invocation.
+    compiled = graph.compile(checkpointer=checkpointer)
     log.info("KODMOD graph compiled with %d nodes", len(graph.nodes))
     return compiled
 
@@ -275,7 +274,7 @@ async def run_turn(
 
         async for event in run_turn(graph, state, {"configurable": {"thread_id": sid}}):
             if event["event"] == "on_chat_model_stream":
-                await ws.send_bytes(synthesize_partial(event["data"]))
+                await ws.send_json({"type": "token", "text": ...})
     """
     async for event in graph.astream_events(state, config=config, version="v2"):
         yield event

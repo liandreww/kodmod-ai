@@ -18,7 +18,7 @@ from tests.security import _jwt_attacks as atk
 
 pytestmark = [pytest.mark.security, pytest.mark.asyncio(loop_scope="session")]
 
-REF = "/student/me"  # reference protected endpoint
+REF = "/auth/me"  # reference protected endpoint
 
 
 # --------------------------------------------------------------------------- #
@@ -37,9 +37,7 @@ async def test_km_sec_002_wrong_signature_rejected(client) -> None:  # type: ign
 async def test_km_sec_003_tampered_payload_rejected(client, student_factory) -> None:  # type: ignore[no-untyped-def]
     st, _tok = await student_factory()
     forged = atk.tampered_role(st.id, "teacher")
-    r = await client.get(
-        f"/analytics/classroom/{uuid.uuid4()}", headers={"Authorization": f"Bearer {forged}"}
-    )
+    r = await client.get("/analytics/cohort", headers={"Authorization": f"Bearer {forged}"})
     assert r.status_code == 401  # signature no longer verifies
 
 
@@ -83,9 +81,7 @@ async def test_km_sec_006b_sub_sql_payload(client) -> None:  # type: ignore[no-u
 # --------------------------------------------------------------------------- #
 async def test_km_sec_007_student_cannot_reach_teacher_route(client, student_factory) -> None:  # type: ignore[no-untyped-def]
     _st, tok = await student_factory()
-    r = await client.get(
-        f"/analytics/classroom/{uuid.uuid4()}", headers={"Authorization": f"Bearer {tok}"}
-    )
+    r = await client.get("/analytics/cohort", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403
     assert "teacher" in r.text.lower()
 
@@ -130,29 +126,35 @@ async def test_km_sec_010_idor_student_profile(client, student_factory) -> None:
 # --------------------------------------------------------------------------- #
 # KM-SEC-011 — IDOR on /exercise/generate
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#7 — POST /exercise/generate imports generate_questions_for_student (missing); the IDOR "
-    "guard (student.id != payload.student_id -> 403) can only be verified once the route runs"
-)
-async def test_km_sec_011_idor_exercise_generate(client, student_factory, concept_ids) -> None:  # type: ignore[no-untyped-def]
+async def test_km_sec_011_exercise_generate_ignores_a_forged_owner(  # type: ignore[no-untyped-def]
+    client, student_factory, concept_ids
+) -> None:
+    """IDOR is designed out: the schema has no student_id, so the token decides.
+
+    A caller can still *send* one. It must be ignored, not honoured.
+    """
     _atk, tok = await student_factory()
     victim, _v = await student_factory()
     r = await client.post(
         "/exercise/generate",
         headers={"Authorization": f"Bearer {tok}"},
-        json={"student_id": str(victim.id), "concept_id": concept_ids["pecahan"], "n_questions": 3},
+        json={"student_id": str(victim.id), "concept_id": concept_ids["pecahan"], "n_questions": 1},
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
+    assert str(victim.id) not in r.text
 
 
 # --------------------------------------------------------------------------- #
 # KM-SEC-012 — IDOR on /quiz/*
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#5 / #14 — quiz request/response field mismatch and missing per-caller ownership checks; "
-    "target: a student cannot start or submit against another student's session (403)"
-)
-async def test_km_sec_012_idor_quiz(client, student_factory, concept_ids) -> None:  # type: ignore[no-untyped-def]
+async def test_km_sec_012_quiz_start_ignores_a_forged_owner(  # type: ignore[no-untyped-def]
+    client, student_factory, concept_ids
+) -> None:
+    """The quiz session belongs to the token holder, never to a body field."""
+    from sqlalchemy import text
+
+    from database.session import async_session
+
     _atk, tok = await student_factory()
     victim, _v = await student_factory()
     r = await client.post(
@@ -161,11 +163,21 @@ async def test_km_sec_012_idor_quiz(client, student_factory, concept_ids) -> Non
         json={
             "student_id": str(victim.id),
             "concept_id": concept_ids["pecahan"],
-            "n_questions": 3,
+            "n_questions": 1,
             "difficulty": "easy",
         },
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
+    session_id = r.json()["quiz_session_id"]
+
+    async with async_session() as s:
+        owner = (
+            await s.execute(
+                text("SELECT student_id FROM quiz_sessions WHERE id = CAST(:id AS uuid)"),
+                {"id": session_id},
+            )
+        ).scalar_one()
+    assert str(owner) != str(victim.id)
 
 
 # --------------------------------------------------------------------------- #
@@ -179,15 +191,13 @@ _ALLOWLIST = {
     ("GET", "/docs"),
     ("GET", "/redoc"),
     ("GET", "/docs/oauth2-redirect"),
-    ("POST", "/student"),
-    ("GET", "/content/concepts"),
-    ("GET", "/content/concepts/{concept_id}"),
-    ("GET", "/content/concepts/{concept_id}/lessons"),
-    ("POST", "/content/retrieve"),
+    ("POST", "/auth/register"),
+    ("POST", "/auth/login"),
+    ("GET", "/auth/username-available"),
 }
+# Deliberately unauthenticated but not part of the product surface: Prometheus
+# is expected to be network-restricted at deploy time.
 _KNOWN_GAPS = {
-    ("GET", "/student/{student_id}/profile"),
-    ("GET", "/exercise/by-concept/{concept_id}"),
     ("MOUNT", "/metrics"),
 }
 
@@ -215,8 +225,8 @@ def test_km_sec_013a_no_unexpected_unauth_endpoints() -> None:
 
 
 @pytest.mark.known_bug(
-    "#14 — /student/{id}/profile, /exercise/by-concept/{id} and /metrics are reachable with no "
-    "auth and are not a conscious allowlist entry; target: authenticate or allowlist explicitly"
+    "#14 — /metrics is reachable with no auth; acceptable only because deployment is "
+    "expected to restrict it at the network layer"
 )
 def test_km_sec_013b_known_gaps_closed() -> None:
     still_open = _unauth_routes() & _KNOWN_GAPS

@@ -7,8 +7,6 @@ running the full LangGraph router. These are the commands a blind user
 needs to feel in control of pacing:
 
     "ulangi" / "repeat"        -> re-emit last assistant turn
-    "lebih pelan" / "slower"   -> reduce TTS rate
-    "lebih cepat" / "faster"   -> increase TTS rate
     "berhenti" / "stop"        -> cancel current generation
     "lanjut" / "next"          -> advance to next item
     "kembali" / "back"         -> go back one item
@@ -16,6 +14,9 @@ needs to feel in control of pacing:
 
 Detection is regex-based for sub-millisecond latency. If no match, the
 utterance is sent through to the intent router as normal.
+
+Playback speed and volume are deliberately absent: speech synthesis runs in
+the browser, so the client owns those controls.
 """
 
 from __future__ import annotations
@@ -29,17 +30,9 @@ _COMMANDS = {
         r"^\s*(ulangi(?:\s+lagi)?|repeat(?:\s+that)?|sekali\s+lagi|say\s+again)\s*[?.!]?\s*$", re.I
     ),
     "stop": re.compile(r"^\s*(berhenti|stop|cukup|udahan|hentikan)\s*[?.!]?\s*$", re.I),
-    "slower": re.compile(
-        r"^\s*(lebih\s+)?(pelan|lambat|slower|slow\s+down)(\s+lagi)?\s*[?.!]?\s*$", re.I
-    ),
-    "faster": re.compile(
-        r"^\s*(lebih\s+)?(cepat|kencang|faster|speed\s+up)(\s+lagi)?\s*[?.!]?\s*$", re.I
-    ),
     "next": re.compile(r"^\s*(lanjut(?:kan)?|berikutnya|next|continue)\s*[?.!]?\s*$", re.I),
     "back": re.compile(r"^\s*(kembali|sebelumnya|back|previous)\s*[?.!]?\s*$", re.I),
     "help": re.compile(r"^\s*(bantuan|tolong|help|menu)\s*[?.!]?\s*$", re.I),
-    "louder": re.compile(r"^\s*(lebih\s+)?(keras|nyaring|louder)\s*[?.!]?\s*$", re.I),
-    "quieter": re.compile(r"^\s*(lebih\s+)?(pelan\s+suara|quieter|softer)\s*[?.!]?\s*$", re.I),
     "start_quiz": re.compile(r"^\s*(mulai\s+kuis|start\s+quiz|kuis\s+sekarang)\s*[?.!]?\s*$", re.I),
 }
 
@@ -68,7 +61,6 @@ def detect_command(text: str) -> VoiceCommand | None:
 HELP_TEXT_ID = (
     "Beberapa perintah suara yang tersedia: "
     "ucapkan 'ulangi' untuk mengulang penjelasan, "
-    "'lebih pelan' atau 'lebih cepat' untuk mengubah kecepatan suara, "
     "'lanjut' untuk melanjutkan, "
     "'mulai kuis' untuk memulai sesi kuis, "
     "atau 'berhenti' untuk menghentikan saya."
@@ -77,7 +69,6 @@ HELP_TEXT_ID = (
 HELP_TEXT_EN = (
     "Available voice commands: "
     "say 'repeat' to hear the last explanation again, "
-    "'slower' or 'faster' to change my speaking speed, "
     "'next' to move on, "
     "'start quiz' to begin a quiz session, "
     "or 'stop' to interrupt me."

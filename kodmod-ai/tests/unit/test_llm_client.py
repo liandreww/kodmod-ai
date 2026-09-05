@@ -1,87 +1,102 @@
-"""KM-UNIT-130..134 — per-role LLM getters (tools/llm_client.py).
+"""KM-UNIT-130..135 — per-role LLM getters (tools/llm_client.py).
 
-The getters are `@lru_cache`d and take no arguments; provider is chosen by the
-KODMOD_LLM_PROVIDER env var. We patch `_FACTORIES` (and, for vllm, the
-`langchain_openai.ChatOpenAI` symbol) and always `cache_clear()` afterwards so
-one test can't leak a stubbed model into the next.
+OpenAI is the only provider. Each getter is `@lru_cache`d, takes no arguments,
+and reads its model id from settings, so these tests patch
+`langchain_openai.ChatOpenAI` to capture what would have been constructed and
+call `reset_llm_cache()` afterwards so one test cannot leak into the next.
 
 Spec: docs/testplan/01-unit.md §9.
 """
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 import tools.llm_client as llm_client
-from tests._fakes.fake_chat import make_fake_chat
+from config.settings import MODEL_UNSET
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.no_llm_stub]
+
+
+class _RecordingChatOpenAI:
+    """Stands in for ChatOpenAI and records the kwargs it was built with."""
+
+    last_kwargs: ClassVar[dict[str, object]] = {}
+
+    def __init__(self, **kwargs: object) -> None:
+        type(self).last_kwargs = dict(kwargs)
+
+    async def ainvoke(self, *_a: object, **_k: object) -> None: ...
+
+    async def astream(self, *_a: object, **_k: object) -> None: ...
 
 
 @pytest.fixture(autouse=True)
 def _clear_getter_caches():
+    llm_client.reset_llm_cache()
     yield
-    for name in (
-        "get_router_llm",
-        "get_tutor_llm",
-        "get_quiz_llm",
-        "get_scoring_llm",
-        "get_recommendation_llm",
-    ):
-        getattr(llm_client, name).cache_clear()
+    llm_client.reset_llm_cache()
 
 
-def test_getter_returns_runnable_model(monkeypatch: pytest.MonkeyPatch) -> None:  # KM-UNIT-130
-    monkeypatch.setitem(
-        llm_client._FACTORIES, "anthropic", lambda *_a, **_k: make_fake_chat("tutor")
-    )
-    llm_client.get_tutor_llm.cache_clear()
+@pytest.fixture
+def recording_openai(monkeypatch: pytest.MonkeyPatch) -> type[_RecordingChatOpenAI]:
+    langchain_openai = pytest.importorskip("langchain_openai")
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", _RecordingChatOpenAI)
+    return _RecordingChatOpenAI
+
+
+def test_getter_returns_runnable_model(recording_openai) -> None:  # KM-UNIT-130
     model = llm_client.get_tutor_llm()
     assert hasattr(model, "ainvoke")
     assert hasattr(model, "astream")
 
 
-def test_provider_switch_selects_factory(monkeypatch: pytest.MonkeyPatch) -> None:  # KM-UNIT-131
-    used: list[str] = []
-    for key in list(llm_client._FACTORIES):
-        monkeypatch.setitem(
-            llm_client._FACTORIES,
-            key,
-            lambda *_a, _k=key, **_kw: used.append(_k) or make_fake_chat("router"),
-        )
-    monkeypatch.setenv("KODMOD_LLM_PROVIDER", "openai")
-    llm_client.get_router_llm.cache_clear()
+def test_each_role_uses_its_own_configured_model(  # KM-UNIT-131
+    recording_openai, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A role must read its own LLM_*_MODEL, not another role's."""
+    monkeypatch.setattr(llm_client.settings, "LLM_ROUTER_MODEL", "model-for-router")
+    monkeypatch.setattr(llm_client.settings, "LLM_TUTOR_MODEL", "model-for-tutor")
+
     llm_client.get_router_llm()
-    assert used == ["openai"]
+    assert recording_openai.last_kwargs["model"] == "model-for-router"
+
+    llm_client.get_tutor_llm()
+    assert recording_openai.last_kwargs["model"] == "model-for-tutor"
 
 
-def test_recommendation_llm_is_quiz_llm(monkeypatch: pytest.MonkeyPatch) -> None:  # KM-UNIT-132
-    monkeypatch.setitem(
-        llm_client._FACTORIES, "anthropic", lambda *_a, **_k: make_fake_chat("quiz")
-    )
-    llm_client.get_quiz_llm.cache_clear()
-    llm_client.get_recommendation_llm.cache_clear()
-    assert llm_client.get_recommendation_llm() is llm_client.get_quiz_llm()
+def test_role_kwargs_differ(recording_openai) -> None:  # KM-UNIT-132
+    """The tutor streams and is allowed to be discursive; the router is neither."""
+    llm_client.get_tutor_llm()
+    tutor = dict(recording_openai.last_kwargs)
+    llm_client.get_router_llm()
+    router = dict(recording_openai.last_kwargs)
+
+    assert tutor["streaming"] is True
+    assert router["streaming"] is False
+    assert router["temperature"] == 0.0
+    assert tutor["max_tokens"] > router["max_tokens"]
 
 
-def test_getter_rejects_arguments() -> None:  # KM-UNIT-133
+def test_base_url_is_forwarded_when_set(  # KM-UNIT-133
+    recording_openai, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The test stack points every call at an OpenAI-compatible stub this way."""
+    monkeypatch.setattr(llm_client.settings, "OPENAI_BASE_URL", "http://stub:8099/v1")
+    llm_client.get_quiz_llm()
+    assert recording_openai.last_kwargs["base_url"] == "http://stub:8099/v1"
+
+
+def test_unset_model_raises_a_readable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # KM-UNIT-134
+    monkeypatch.setattr(llm_client.settings, "LLM_SCORING_MODEL", MODEL_UNSET)
+    with pytest.raises(llm_client.ModelNotConfiguredError) as exc:
+        llm_client.get_scoring_llm()
+    assert "LLM_SCORING_MODEL" in str(exc.value)
+
+
+def test_getter_rejects_arguments() -> None:  # KM-UNIT-135
     with pytest.raises(TypeError):
         llm_client.get_tutor_llm(temperature=0.2)  # type: ignore[call-arg]
-
-
-def test_vllm_uses_empty_api_key_and_env_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    # KM-UNIT-134
-    langchain_openai = pytest.importorskip("langchain_openai")
-    captured: dict[str, object] = {}
-
-    class _RecordingChatOpenAI:
-        def __init__(self, **kwargs: object) -> None:
-            captured.update(kwargs)
-
-    monkeypatch.setattr(langchain_openai, "ChatOpenAI", _RecordingChatOpenAI)
-    monkeypatch.setenv("KODMOD_LLM_PROVIDER", "vllm")
-    monkeypatch.setenv("VLLM_BASE_URL", "http://test-vllm:9000/v1")
-    llm_client.get_router_llm.cache_clear()
-    llm_client.get_router_llm()
-    assert captured["api_key"] == "EMPTY"
-    assert captured["base_url"] == "http://test-vllm:9000/v1"

@@ -3,23 +3,22 @@ KODMOD AI — Quiz REST Routes
 =============================
 
 For clients that want fine-grained control over quiz sessions outside the
-voice WebSocket (e.g. teacher dashboards previewing a quiz, or accessibility
-tools that prefer text submission).
+chat WebSocket, where a quiz is normally driven by conversation alone.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 
-from api.dependencies import current_student
+from api.dependencies import require_student
 from config.settings import settings
-from database.models import QuizAttempt, QuizQuestion, QuizSession, Student
+from database.models import QuizAttempt, QuizQuestion, QuizSession, User
 from database.session import async_session
 from graphs.state import build_learning_profile, initial_state
 from models.quiz import (
@@ -51,7 +50,6 @@ def _to_question_out(q: dict[str, Any] | None, idx: int) -> QuizQuestionOut:
         question_type=q.get("type") or q.get("question_type") or "spoken",
         options=list(q.get("options") or []),
         difficulty=str(q.get("difficulty") or "medium"),
-        audio_url=q.get("audio_url"),
     )
 
 
@@ -59,15 +57,9 @@ def _to_question_out(q: dict[str, Any] | None, idx: int) -> QuizQuestionOut:
 async def start_quiz(
     request: Request,
     body: QuizStartRequest,
-    student: Student = Depends(current_student),
+    student: User = Depends(require_student),
 ) -> QuizStartResponse:
-    """
-    Start a new quiz session by invoking the problem generator.
-    Returns the first question (text + audio URI).
-    """
-    if body.student_id != student.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Mismatched student_id")
-
+    """Start a quiz session by invoking the problem generator, and return question one."""
     sid = str(uuid4())
     state = initial_state(session_id=sid, student_id=str(student.id))
     state["intent"] = "quiz"
@@ -121,7 +113,7 @@ async def start_quiz(
     except Exception:  # pragma: no cover - persistence must not break quiz start
         log.warning("Could not persist quiz session %s", sid, exc_info=True)
 
-    # The `sid` — not the internal `quiz-xxxx` label — is the checkpoint thread id
+    # The `sid`, not the internal `quiz-xxxx` label, is the checkpoint thread id
     # and the short-term-memory key, so it must be what the client sends back to
     # /quiz/submit.
     return QuizStartResponse(
@@ -135,7 +127,7 @@ async def start_quiz(
 async def submit_answer(
     request: Request,
     body: QuizSubmitRequest,
-    student: Student = Depends(current_student),
+    student: User = Depends(require_student),
 ) -> QuizSubmitResponse:
     """
     Submit one answer to the current quiz question. The graph re-enters at
@@ -152,22 +144,11 @@ async def submit_answer(
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": thread_id}}
 
-    # Resume the graph from its last checkpoint, injecting the new answer
+    # Resume the graph from its last checkpoint, injecting the new answer. The
+    # graph compiles without interrupts, so one invocation runs the turn to the end.
     final = await graph.ainvoke(state, config=config)
-
-    # If the graph paused on the reflection interrupt but the quiz is already
-    # exhausted, drive it through analytics → recommendation → accessibility.
-    try:
-        snapshot = await graph.aget_state(config)
-        pending = bool(getattr(snapshot, "next", ()))
-    except Exception:  # pragma: no cover - best effort
-        pending = False
     total = len(final.get("quiz_questions", []))
     answered = final.get("current_question_index", 0)
-    if pending and total and answered >= total:
-        final = await graph.ainvoke(None, config=config)
-        total = len(final.get("quiz_questions", []))
-        answered = final.get("current_question_index", 0)
 
     score = final.get("quiz_score", 0.0)
     cumulative = final.get("cumulative_quiz_score", 0.0)
@@ -220,7 +201,7 @@ async def submit_answer(
                         )
                     if quiz_complete:
                         qs.status = "completed"
-                        qs.ended_at = datetime.utcnow()
+                        qs.ended_at = datetime.now(UTC)
                         qs.final_score = cumulative
                         qs.correct_count = sum(1 for a in attempts if a.get("is_correct"))
         except Exception:  # pragma: no cover - persistence must not break submit
@@ -229,22 +210,18 @@ async def submit_answer(
     final_summary = None
     if quiz_complete:
         final_summary = (
-            final.get("generated_response")
-            or final.get("accessible_response")
+            final.get("accessible_response")
+            or final.get("generated_response")
             or f"Kuis selesai. Skor kamu {cumulative:.0%}."
         )
 
     return QuizSubmitResponse(
         score=score,
         is_correct=score >= settings.QUIZ_PASS_THRESHOLD,
-        feedback=final.get("generated_response", ""),
-        spoken_feedback_audio_url=final.get("audio_response_path", "") or None,
+        feedback=final.get("accessible_response") or final.get("generated_response", ""),
         cumulative_score=cumulative,
         quiz_complete=quiz_complete,
         final_summary=final_summary,
-        final_summary_audio_url=(final.get("audio_response_path") or None)
-        if quiz_complete
-        else None,
         next_question=(
             _to_question_out(final.get("quiz_question"), answered)
             if not quiz_complete and final.get("quiz_question")

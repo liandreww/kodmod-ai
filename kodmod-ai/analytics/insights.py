@@ -20,7 +20,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from tools.llm_client import get_recommendation_llm
+from tools.llm_client import get_recommendation_llm, language_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _pct(x: float) -> str:
 def _format_concept_list(items: list[dict], key: str = "concept_name", n: int = 3) -> str:
     if not items:
         return "belum ada"
-    names = [i.get(key, "—") for i in items[:n]]
+    names = [i.get(key) or "konsep tanpa nama" for i in items[:n]]
     if len(names) == 1:
         return names[0]
     return ", ".join(names[:-1]) + f", dan {names[-1]}"
@@ -136,36 +136,37 @@ def generate_teacher_summary(analytics: dict) -> dict:
         )
 
     headline = (
-        f"{student_name} — penguasaan {int(analytics.get('overall_mastery', 0) * 100)}%, "
+        f"{student_name}: penguasaan {int(analytics.get('overall_mastery', 0) * 100)}%, "
         f"akurasi kuis {int(accuracy * 100)}%, "
         f"{analytics.get('n_sessions', 0)} sesi minggu ini."
     )
     return {"headline": headline, "alerts": alerts}
 
 
-# ------------------------------------------------ classroom-level alerts --
-def generate_classroom_alerts(classroom_summary: dict) -> list[dict]:
-    if classroom_summary.get("error"):
+# --------------------------------------------------- cohort-level alerts --
+def generate_cohort_alerts(cohort_summary: dict) -> list[dict]:
+    """Alerts spanning every student, shown at the top of the teacher dashboard."""
+    if cohort_summary.get("error"):
         return []
     alerts: list[dict] = []
-    weak = classroom_summary.get("class_weak_concepts", [])
+    weak = cohort_summary.get("cohort_weak_concepts", [])
     if weak and weak[0]["avg_mastery"] < 0.5:
         alerts.append(
             {
                 "level": "warning",
-                "title": f"Konsep kelas lemah: {weak[0]['concept_name']}",
+                "title": f"Konsep lemah: {weak[0]['concept_name']}",
                 "detail": (
-                    f"Rata-rata penguasaan kelas hanya "
+                    f"Rata-rata penguasaan hanya "
                     f"{int(weak[0]['avg_mastery'] * 100)}% pada {weak[0]['n_students']} siswa. "
-                    "Pertimbangkan re-teach materi ini."
+                    "Pertimbangkan mengajarkan ulang materi ini."
                 ),
             }
         )
-    if classroom_summary.get("avg_engagement_index", 0) < 0.3:
+    if cohort_summary.get("avg_engagement_index", 0) < 0.3:
         alerts.append(
             {
                 "level": "info",
-                "title": "Keterlibatan kelas rendah",
+                "title": "Keterlibatan rendah",
                 "detail": "Rata-rata sesi per siswa di bawah ambang sehat.",
             }
         )
@@ -205,6 +206,7 @@ async def generate_insights(
             else "You are a warm educator. Polish the following summary to be more "
             "encouraging. Add no new information. Maximum 3 sentences. No markdown."
         )
+        sys += language_instruction()
         resp = await llm.ainvoke([SystemMessage(content=sys), HumanMessage(content=spoken)])
         polished = resp.content if hasattr(resp, "content") else str(resp)
         return {"spoken": polished.strip(), "structured": structured}

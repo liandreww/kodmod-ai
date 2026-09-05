@@ -8,7 +8,7 @@ DC ?= docker compose
 COMPOSE_TEST ?= docker compose -p kodmod-test -f docker/docker-compose.test.yml
 
 .PHONY: help install install-test dev test lint format seed ingest up down logs migrate clean \
-        test-static test-unit test-contract test-integration test-api test-ws test-e2e \
+        admin test-static test-unit test-contract test-integration test-api test-ws test-e2e \
         test-system test-load test-security test-readiness test-ready test-all test-burndown \
         compose-test-up compose-test-up-api compose-test-up-api-perf compose-test-api-down \
         compose-test-down compose-test-logs
@@ -23,6 +23,7 @@ help:
 	@echo "  lint        Run ruff + mypy"
 	@echo "  format      Auto-format with ruff"
 	@echo "  seed        Seed sample curriculum"
+	@echo "  admin       Create the first admin account (prompts for a password)"
 	@echo "  ingest      Ingest sample documents (data/curriculum/*)"
 	@echo "  up          docker compose up (dev)"
 	@echo "  down        docker compose down"
@@ -43,7 +44,7 @@ test:
 
 lint:
 	$(PY) -m ruff check .
-	$(PY) -m mypy --ignore-missing-imports agents graphs tools rag api analytics accessibility memory voice config
+	$(PY) -m mypy --ignore-missing-imports agents graphs tools rag api analytics accessibility memory config
 
 format:
 	$(PY) -m ruff format .
@@ -51,6 +52,9 @@ format:
 
 seed:
 	$(PY) -m scripts.seed_curriculum
+
+admin:
+	$(PY) -m scripts.create_admin --username admin
 
 ingest:
 	$(PY) -m scripts.ingest_documents --path data/curriculum
@@ -73,7 +77,7 @@ clean:
 	find . -type d -name .ruff_cache -exec rm -rf {} +
 
 # ---------------------------------------------------------------- test stages --
-# Only the test INFRA runs in Docker (postgres, redis, llm-stub — see
+# Only the test INFRA runs in Docker (postgres, redis, llm-stub, see
 # docker/docker-compose.test.yml). `db-init` (schema+seed via scripts/init_test_db)
 # and the `api` server (scripts/serve_test_api) run natively on the host, so a
 # code change needs no `docker build`. Test SCRIPTS
@@ -100,7 +104,7 @@ compose-test-up-api-perf: compose-test-up compose-test-api-down
 	@# Stage 8 needs a *fresh* server: in-memory checkpointer (the Postgres saver
 	@# serialises every graph turn on one asyncio.Lock) + reload off.
 	@mkdir -p reports
-	@KODMOD_CHECKPOINTER=memory SERVE_TEST_API_RELOAD= \
+	@CHECKPOINTER=memory SERVE_TEST_API_RELOAD= \
 	  sh -c '$(PY) -m scripts.serve_test_api >reports/api.log 2>&1 & echo $$! >reports/.api.pid'
 	@echo "waiting for api on http://localhost:8000/live ..."
 	@for i in $$(seq 1 30); do curl -fsS http://localhost:8000/live >/dev/null 2>&1 && exit 0; sleep 2; done; echo "api did not become healthy -- see reports/api.log" >&2; exit 1

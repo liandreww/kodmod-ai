@@ -2,92 +2,75 @@
 KODMOD AI — Analytics Routes
 ============================
 
-Endpoints feeding the Student Dashboard and Teacher Dashboard
-(Cluster Analytics & Reporting).
-
-- GET /analytics/student/{id}            -> student rollup
-- GET /analytics/student/{id}/spoken     -> spoken summary (audio-friendly text)
-- GET /analytics/classroom/{id}          -> classroom rollup
-- GET /analytics/classroom/{id}/alerts   -> classroom alerts for teacher
+- GET /analytics/me                      -> the signed-in student's own rollup
+- GET /analytics/me/spoken               -> the same, as a short spoken summary
+- GET /analytics/student/{id}            -> one student (self, or any teacher)
+- GET /analytics/cohort                  -> every student (teacher only)
+- GET /analytics/cohort/alerts           -> cohort alerts plus per-student rows
 """
 
 from __future__ import annotations
 
-import logging
 import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from analytics.aggregator import ClassroomAggregator, StudentAggregator
-from analytics.insights import (
-    generate_classroom_alerts,
-    generate_student_spoken_summary,
-    generate_teacher_summary,
-)
-from api.dependencies import current_student, current_teacher
-from database.models import Student, Teacher
+from analytics.aggregator import CohortAggregator, StudentAggregator
+from analytics.insights import generate_cohort_alerts, generate_student_spoken_summary
+from api.dependencies import current_user, require_student, require_teacher
+from database.models import User
 
-logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=["analytics"])
 
-WindowName = Literal["today", "week", "month", "all"]
+Window = Literal["today", "week", "month", "all"]
+
+
+@router.get("/me")
+async def my_analytics(
+    window: Window = Query(default="week"),
+    student: User = Depends(require_student),
+) -> dict:
+    """Your own progress: mastery, quiz accuracy, engagement, misconceptions."""
+    return await StudentAggregator().summarise(student_id=student.id, window=window)
+
+
+@router.get("/me/spoken")
+async def my_analytics_spoken(
+    window: Window = Query(default="week"),
+    student: User = Depends(require_student),
+) -> dict:
+    """Your own progress, plus a few sentences written to be heard."""
+    summary = await StudentAggregator().summarise(student_id=student.id, window=window)
+    return {"summary": summary, "spoken": generate_student_spoken_summary(summary)}
 
 
 @router.get("/student/{student_id}")
 async def student_analytics(
     student_id: uuid.UUID,
-    window: WindowName = Query("week"),
-    student: Student = Depends(current_student),
+    window: Window = Query(default="week"),
+    user: User = Depends(current_user),
 ) -> dict:
-    """Return a student's analytics rollup for the given time window."""
-    if student.id != student_id:
-        # In future: allow if requester is the teacher of this student.
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another student's analytics")
+    """A student may read their own rollup; a teacher may read anyone's."""
+    if user.role != "teacher" and user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only view your own analytics.")
     return await StudentAggregator().summarise(student_id=student_id, window=window)
 
 
-@router.get("/student/{student_id}/spoken")
-async def student_analytics_spoken(
-    student_id: uuid.UUID,
-    window: WindowName = Query("week"),
-    student: Student = Depends(current_student),
+@router.get("/cohort")
+async def cohort_analytics(
+    window: Window = Query(default="week"),
+    _: User = Depends(require_teacher),
 ) -> dict:
-    """Return an audio-friendly spoken summary of a student's analytics."""
-    if student.id != student_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot read another student's analytics")
-    rollup = await StudentAggregator().summarise(student_id=student_id, window=window)
-    spoken = generate_student_spoken_summary(rollup)
-    return {"spoken": spoken, "rollup": rollup}
+    """Averages and weakest concepts across every student."""
+    return await CohortAggregator().summarise(window=window)
 
 
-@router.get("/classroom/{classroom_id}")
-async def classroom_analytics(
-    classroom_id: uuid.UUID,
-    window: WindowName = Query("week"),
-    teacher: Teacher = Depends(current_teacher),
+@router.get("/cohort/alerts")
+async def cohort_alerts(
+    window: Window = Query(default="week"),
+    _: User = Depends(require_teacher),
 ) -> dict:
-    """Return a classroom-wide analytics rollup for the teacher dashboard."""
-    return await ClassroomAggregator().summarise(classroom_id=classroom_id, window=window)
-
-
-@router.get("/classroom/{classroom_id}/alerts")
-async def classroom_alerts(
-    classroom_id: uuid.UUID,
-    window: WindowName = Query("week"),
-    teacher: Teacher = Depends(current_teacher),
-) -> dict:
-    """Return teacher-facing alerts and per-student summaries for a classroom."""
-    rollup = await ClassroomAggregator().summarise(classroom_id=classroom_id, window=window)
-    alerts = generate_classroom_alerts(rollup)
-    per_student_summaries = [
-        generate_teacher_summary(
-            await StudentAggregator().summarise(
-                student_id=uuid.UUID(s["student_id"]),
-                window=window,
-                include_recommendations=False,
-            )
-        )
-        for s in rollup.get("students", [])
-    ]
-    return {"alerts": alerts, "per_student": per_student_summaries, "headline": rollup}
+    """Cohort-level alerts, plus the rollup they were derived from."""
+    rollup = await CohortAggregator().summarise(window=window)
+    return {"alerts": generate_cohort_alerts(rollup), "summary": rollup}

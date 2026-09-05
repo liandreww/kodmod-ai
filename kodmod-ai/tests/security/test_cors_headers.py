@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.security, pytest.mark.asyncio(loop_scope="session")]
 )
 async def test_km_sec_060_cors_star_with_credentials(client) -> None:  # type: ignore[no-untyped-def]
     r = await client.options(
-        "/student/me",
+        "/auth/me",
         headers={
             "Origin": "http://evil.test",
             "Access-Control-Request-Method": "GET",
@@ -81,7 +81,7 @@ async def test_km_sec_063_error_verbosity(client) -> None:  # type: ignore[no-un
         settings.JWT_SECRET,
         algorithm=settings.JWT_ALG,
     )
-    r = await client.get("/student/me", headers={"Authorization": f"Bearer {tok}"})
+    r = await client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"})
     body = r.text
     for needle in ("Traceback (most recent call last)", 'File "/', "psycopg", "asyncpg", "SELECT "):
         assert needle not in body, f"error body leaks internals: {needle!r}"
@@ -91,6 +91,6 @@ async def test_km_sec_063_error_verbosity(client) -> None:  # type: ignore[no-un
         settings.JWT_SECRET,
         algorithm=settings.JWT_ALG,
     )
-    r2 = await client.get("/student/me", headers={"Authorization": f"Bearer {tok2}"})
+    r2 = await client.get("/auth/me", headers={"Authorization": f"Bearer {tok2}"})
     assert r2.status_code == 404
     assert "Traceback" not in r2.text

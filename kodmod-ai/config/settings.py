@@ -2,9 +2,9 @@
 KODMOD AI — Configuration Settings
 ==================================
 
-Centralized settings using pydantic-settings. All environment-driven knobs
-flow through here so the rest of the codebase imports `settings` and never
-touches `os.environ` directly.
+Centralized settings using pydantic-settings. **This module is the only place
+in the codebase allowed to read the environment.** Everything else imports
+`settings`; `tests/static/test_no_stray_getenv.py` enforces that.
 
 Environment variables can be supplied via:
 - A `.env` file in the project root
@@ -25,6 +25,10 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Sentinel for model ids that must be supplied by the deployer. Getters raise a
+# readable error instead of letting a bogus id fail mid-conversation.
+MODEL_UNSET = "SET_ME_IN_ENV"
+
 
 class Settings(BaseSettings):
     """Application-wide settings."""
@@ -44,14 +48,15 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ env
     ENV: Literal["dev", "staging", "prod", "test"] = "dev"
     APP_NAME: str = "KODMOD AI"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "0.2.0"
     DEBUG: bool = False
 
     # ------------------------------------------------------------------ api
     API_HOST: str = "0.0.0.0"  # noqa: S104  # bind-all is the container default; restrict via env in prod
     API_PORT: int = 8000
-    API_PREFIX: str = "/api/v1"
-    CORS_ALLOW_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
+    CORS_ALLOW_ORIGINS: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
     JWT_SECRET: str = "change-me-in-production"  # noqa: S105  # placeholder; real value from env/secret
     JWT_ALG: str = "HS256"
     JWT_EXPIRE_MIN: int = 60 * 24  # 24h
@@ -80,6 +85,11 @@ class Settings(BaseSettings):
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 
+    # LangGraph checkpointing. "postgres" persists every turn; "memory" swaps
+    # in the lock-free in-memory saver, which load tests need because
+    # AsyncPostgresSaver serialises checkpoint writes on one process-wide lock.
+    CHECKPOINTER: Literal["postgres", "memory"] = "postgres"
+
     # ---------------------------------------------------------------- redis
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -92,74 +102,54 @@ class Settings(BaseSettings):
         return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # ------------------------------------------------------------------- llm
-    KODMOD_LLM_PROVIDER: Literal["anthropic", "openai", "ollama", "vllm"] = "anthropic"
-    ANTHROPIC_API_KEY: str | None = None
+    # OpenAI is the only provider. OPENAI_BASE_URL exists so the test stack can
+    # point the same code at docker/llm_stub without a second code path.
     OPENAI_API_KEY: str | None = None
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    VLLM_BASE_URL: str = "http://localhost:8001/v1"
+    OPENAI_BASE_URL: str | None = None
 
-    # Per-role model identifiers (overridable per provider via env).
-    LLM_ROUTER_MODEL: str = "claude-haiku-4-5-20251001"
-    LLM_TUTOR_MODEL: str = "claude-opus-4-7"
-    LLM_QUIZ_MODEL: str = "claude-sonnet-4-6"
-    LLM_SCORING_MODEL: str = "claude-sonnet-4-6"
-    LLM_RECOMMENDATION_MODEL: str = "claude-sonnet-4-6"
-    LLM_REFLECTION_MODEL: str = "claude-haiku-4-5-20251001"
+    # Per-role model identifiers. No defaults on purpose: the deployer picks.
+    LLM_ROUTER_MODEL: str = MODEL_UNSET
+    LLM_TUTOR_MODEL: str = MODEL_UNSET
+    LLM_QUIZ_MODEL: str = MODEL_UNSET
+    LLM_SCORING_MODEL: str = MODEL_UNSET
+    LLM_RECOMMENDATION_MODEL: str = MODEL_UNSET
+    LLM_REFLECTION_MODEL: str = MODEL_UNSET
 
     # ------------------------------------------------------------------- rag
-    EMBEDDING_PROVIDER: Literal["bge-m3", "openai", "sentence-transformers"] = "bge-m3"
-    EMBEDDING_MODEL: str = "BAAI/bge-m3"
-    EMBEDDING_DIM: int = 1024
-    VECTOR_BACKEND: Literal["pgvector", "qdrant"] = "pgvector"
-    QDRANT_URL: str = "http://localhost:6333"
-    QDRANT_API_KEY: str | None = None
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIM: int = 1536
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
+    RAG_RERANK_ENABLED: bool = False
     RAG_TOP_K: int = 8
     RAG_RERANK_TOP_K: int = 4
 
-    # ----------------------------------------------------------------- voice
-    STT_BACKEND: Literal["faster-whisper", "openai-whisper", "deepgram"] = "faster-whisper"
-    STT_MODEL: str = "large-v3"
-    STT_DEVICE: Literal["cuda", "cpu", "auto"] = "auto"
-    STT_COMPUTE_TYPE: str = "float16"
-    STT_LANGUAGE: str = "id"  # Bahasa Indonesia primary
-    DEEPGRAM_API_KEY: str | None = None
-
-    TTS_BACKEND: Literal["piper", "azure", "elevenlabs", "coqui"] = "piper"
-    TTS_VOICE: str = "id-ID-ArdiNeural"
-    TTS_RATE: float = 1.0
-    AZURE_TTS_KEY: str | None = None
-    AZURE_TTS_REGION: str | None = None
-    ELEVENLABS_API_KEY: str | None = None
-
-    # Voice on/off switches — when false the stt/tts graph nodes become
-    # pass-throughs so the whole turn is text in / text out (cheaper testing).
-    TTS_ENABLED: bool = True
-    STT_ENABLED: bool = True
-
-    AUDIO_DIR: Path = Path("/var/lib/kodmod/audio")
-    UPLOAD_DIR: Path = Path("/var/lib/kodmod/uploads")
-    MAX_AUDIO_SECONDS: int = 120
-    WS_MAX_FRAME_BYTES: int = 1_048_576  # per-frame inbound cap on the /ws/voice socket
+    # ---------------------------------------------------------------- upload
+    # Teacher-uploaded curriculum documents land here before ingestion.
+    UPLOAD_DIR: Path = Path("./data/uploads")
+    MAX_UPLOAD_MB: int = 25
+    WS_MAX_FRAME_BYTES: int = 262_144  # per-frame inbound cap on /ws/chat
 
     # --------------------------------------------------------- observability
     LANGSMITH_API_KEY: str | None = None
     LANGSMITH_PROJECT: str = "kodmod-ai"
     LANGCHAIN_TRACING_V2: bool = False
-    PROMETHEUS_ENABLED: bool = True
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     LOG_JSON: bool = True
 
     # ----------------------------------------------------------- pedagogy
     DEFAULT_DIFFICULTY: Literal["easy", "medium", "hard"] = "medium"
     DEFAULT_LANGUAGE: Literal["id", "en"] = "id"
+    # Natural-language name (not a code) — appended verbatim to every agent's
+    # system prompt via `tools.llm_client.language_instruction()` so LLM
+    # output language stays consistent regardless of input language.
+    GRAPH_LANGUAGE: str = "Bahasa Indonesia"
     QUIZ_PASS_THRESHOLD: float = 0.6
+    QUIZ_MAX_ATTEMPTS_PER_QUESTION: int = 2
     MASTERY_PROMOTION: float = 0.8
     SOCRATIC_DEPTH: int = 3  # how many follow-up turns the tutor pursues
 
     # ----------------------------------------------------------- accessibility
     ACCESSIBILITY_DEFAULT_PROFILE: Literal["blind", "low_vision", "standard"] = "blind"
-    SSML_ENABLED: bool = True
     MAX_SPOKEN_SENTENCE_WORDS: int = 22
 
     # ----------------------------------------------------------------- validators
@@ -170,16 +160,20 @@ class Settings(BaseSettings):
             return [s.strip() for s in v.split(",") if s.strip()]
         return v
 
-    @field_validator("AUDIO_DIR", "UPLOAD_DIR", mode="after")
+    @field_validator("UPLOAD_DIR", mode="after")
     @classmethod
     def _ensure_dir(cls, v: Path) -> Path:
         try:
             v.mkdir(parents=True, exist_ok=True)
         except (PermissionError, OSError):
             # In tests / restricted CI we silently skip; the runtime user must
-            # ensure these exist with proper perms in production.
+            # ensure this exists with proper perms in production.
             pass
         return v
+
+    @property
+    def MAX_UPLOAD_BYTES(self) -> int:  # noqa: N802
+        return self.MAX_UPLOAD_MB * 1024 * 1024
 
 
 @lru_cache(maxsize=1)

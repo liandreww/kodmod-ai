@@ -10,8 +10,10 @@ Computes the metrics that flow into:
 
 Two aggregators:
 
-- `StudentAggregator`     -> per-student rollups
-- `ClassroomAggregator`   -> per-classroom rollups (teacher view)
+- `StudentAggregator`  -> per-student rollups
+- `CohortAggregator`   -> rollups across every student (the teacher view)
+
+There are no classrooms: a teacher sees every student.
 
 Each returns a dict that is JSON-serialisable, suitable for both API
 responses and storing as `analytics_reports.payload`.
@@ -19,16 +21,16 @@ responses and storing as `analytics_reports.payload`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
 from sqlalchemy import func, select
 
 from database.models import (
-    Classroom,
     Concept,
     InteractionLog,
     LearningSession,
@@ -36,7 +38,7 @@ from database.models import (
     Misconception,
     QuizAttempt,
     QuizSession,
-    Student,
+    User,
 )
 from database.session import async_session
 from memory.long_term import fetch_active_recommendations
@@ -47,9 +49,9 @@ WindowName = Literal["today", "week", "month", "all"]
 
 
 def _window_start(window: WindowName) -> datetime | None:
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     if window == "today":
-        return datetime(now.year, now.month, now.day)
+        return datetime(now.year, now.month, now.day, tzinfo=UTC)
     if window == "week":
         return now - timedelta(days=7)
     if window == "month":
@@ -69,7 +71,7 @@ class StudentAggregator:
         start = _window_start(window)
 
         async with async_session() as session:
-            student = await session.get(Student, student_id)
+            student = await session.get(User, student_id)
             if student is None:
                 return {"error": "student_not_found"}
 
@@ -154,7 +156,7 @@ class StudentAggregator:
         overall_mastery = sum(m["mastery"] for m in mastery) / len(mastery) if mastery else 0.0
 
         # Engagement index (heuristic): sessions/day * avg-session-minutes / 30
-        days_in_window = max(1, (datetime.utcnow() - start).days) if start else 30
+        days_in_window = max(1, (datetime.now(UTC) - start).days) if start else 30
         sessions_per_day = n_sessions / days_in_window
         engagement_index = min(1.0, sessions_per_day * (total_minutes / max(1, n_sessions)) / 30.0)
 
@@ -180,7 +182,7 @@ class StudentAggregator:
                 for mc, c in miscons
             ],
             "engagement_index": round(engagement_index, 3),
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
         if include_recommendations:
@@ -189,64 +191,51 @@ class StudentAggregator:
 
 
 @dataclass
-class ClassroomAggregator:
-    async def summarise(self, *, classroom_id: uuid.UUID, window: WindowName = "week") -> dict:
-        async with async_session() as session:
-            classroom = await session.get(Classroom, classroom_id)
-            if classroom is None:
-                return {"error": "classroom_not_found"}
+class CohortAggregator:
+    """Rollups across every student. This is what the teacher dashboard shows."""
 
-        # NOTE (bug #20): classroom_enrollment lives in schema.sql but not in the
-        # ORM, so rather than autoloading reflection at request time we run a raw
-        # SQL pass for the roster and per-student rollups. Keeps deps simple and
-        # avoids reflection latency in the hot path.
-        from sqlalchemy import text
-
+    async def summarise(self, *, window: WindowName = "week") -> dict:
         async with async_session() as session:
-            roster_rows = (
+            roster = list(
                 (
                     await session.execute(
-                        text(
-                            "SELECT s.id, s.full_name FROM students s "
-                            "JOIN classroom_enrollment ce ON ce.student_id = s.id "
-                            "WHERE ce.classroom_id = :cid"
-                        ),
-                        {"cid": str(classroom_id)},
+                        select(User.id).where(User.role == "student", User.is_active.is_(True))
                     )
                 )
-                .mappings()
+                .scalars()
                 .all()
             )
 
-        per_student = []
-        for r in roster_rows:
-            per_student.append(
-                await StudentAggregator().summarise(
-                    student_id=uuid.UUID(str(r["id"])),
-                    window=window,
-                    include_recommendations=False,
+        # One round trip per student, run concurrently rather than in sequence.
+        per_student = await asyncio.gather(
+            *(
+                StudentAggregator().summarise(
+                    student_id=sid, window=window, include_recommendations=False
                 )
+                for sid in roster
             )
+        )
+        per_student = [s for s in per_student if "error" not in s]
 
         if not per_student:
             return {
-                "classroom_id": str(classroom_id),
-                "classroom_name": classroom.name,
                 "window": window,
                 "n_students": 0,
-                "generated_at": datetime.utcnow().isoformat(),
+                "students": [],
+                "generated_at": datetime.now(UTC).isoformat(),
             }
 
-        avg_mastery = sum(s["overall_mastery"] for s in per_student) / len(per_student)
-        avg_accuracy = sum(s["quiz_accuracy"] for s in per_student) / len(per_student)
-        avg_engagement = sum(s["engagement_index"] for s in per_student) / len(per_student)
+        n = len(per_student)
+        avg_mastery = sum(s["overall_mastery"] for s in per_student) / n
+        avg_accuracy = sum(s["quiz_accuracy"] for s in per_student) / n
+        avg_engagement = sum(s["engagement_index"] for s in per_student) / n
 
-        # Weakest concepts across the class
+        # Weakest concepts across the cohort.
         concept_to_scores: dict[str, list[float]] = {}
         for s in per_student:
             for w in s.get("weak_concepts", []):
                 concept_to_scores.setdefault(w["concept_name"], []).append(w["mastery"])
-        class_weak = sorted(
+        cohort_weak = sorted(
             (
                 {"concept_name": k, "avg_mastery": sum(v) / len(v), "n_students": len(v)}
                 for k, v in concept_to_scores.items()
@@ -255,14 +244,12 @@ class ClassroomAggregator:
         )[:5]
 
         return {
-            "classroom_id": str(classroom_id),
-            "classroom_name": classroom.name,
             "window": window,
-            "n_students": len(per_student),
+            "n_students": n,
             "avg_mastery": round(avg_mastery, 3),
             "avg_quiz_accuracy": round(avg_accuracy, 3),
             "avg_engagement_index": round(avg_engagement, 3),
-            "class_weak_concepts": class_weak,
+            "cohort_weak_concepts": cohort_weak,
             "students": [
                 {
                     "student_id": s["student_id"],
@@ -270,8 +257,10 @@ class ClassroomAggregator:
                     "overall_mastery": s["overall_mastery"],
                     "quiz_accuracy": s["quiz_accuracy"],
                     "engagement_index": s["engagement_index"],
+                    "n_sessions": s.get("n_sessions", 0),
+                    "open_misconceptions": len(s.get("open_misconceptions", [])),
                 }
                 for s in per_student
             ],
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }

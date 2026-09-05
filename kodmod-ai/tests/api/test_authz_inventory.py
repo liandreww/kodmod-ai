@@ -19,23 +19,17 @@ ALLOWLIST = {
     ("GET", "/docs"),
     ("GET", "/redoc"),
     ("GET", "/docs/oauth2-redirect"),
-    # Conscious public surface:
-    #  - self-service student onboarding
-    ("POST", "/student"),
-    #  - read-only curriculum browsing (no learner data)
-    ("GET", "/content/concepts"),
-    ("GET", "/content/concepts/{concept_id}"),
-    ("GET", "/content/concepts/{concept_id}/lessons"),
-    ("POST", "/content/retrieve"),
+    # Conscious public surface: the front door itself.
+    ("POST", "/auth/register"),
+    ("POST", "/auth/login"),
+    ("GET", "/auth/username-available"),
     #  - Prometheus scrape endpoint (network-restricted in deployment)
     ("MOUNT", "/metrics"),
 }
 
-# Endpoints that currently ship with no auth but are NOT a conscious allowlist entry.
-KNOWN_UNAUTH_GAPS = {
-    ("GET", "/student/{student_id}/profile"),
-    ("GET", "/exercise/by-concept/{concept_id}"),
-}
+# Endpoints that ship with no auth but are NOT a conscious allowlist entry.
+# Empty is the target state; add an entry here only with a finding reference.
+KNOWN_UNAUTH_GAPS: set[tuple[str, str]] = set()
 
 
 def _unauth_routes():
@@ -44,7 +38,9 @@ def _unauth_routes():
     out = set()
     for methods, path, route in iter_routes(app):
         deps = route_dependency_names(route)
-        authed = "current_student" in deps or "current_teacher" in deps
+        # Role gates are built by `require_roles(...)`, which names each closure
+        # `require_<roles>`; `current_user` covers the any-signed-in-account case.
+        authed = any(d == "current_user" or d.startswith("require_") for d in deps)
         for m in methods:
             if m in {"HEAD", "OPTIONS", "WEBSOCKET"}:
                 # WS auth is enforced in-handler via authenticate_ws(?token=),
@@ -61,11 +57,6 @@ def test_km_api_030a_no_new_unauth_endpoints() -> None:
     assert not unexpected, f"new unauthenticated endpoints (not allowlisted): {sorted(unexpected)}"
 
 
-@pytest.mark.known_bug(
-    "#14 — POST /student, GET /student/{id}/profile, all /content/*, "
-    "GET /exercise/by-concept/{id} and /metrics are served with no auth and are not a "
-    "conscious allowlist entry"
-)
 def test_km_api_030b_known_gaps_are_closed() -> None:
     unauth = _unauth_routes()
     still_open = unauth & KNOWN_UNAUTH_GAPS

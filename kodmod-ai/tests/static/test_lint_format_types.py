@@ -15,7 +15,7 @@ from tests.static._util import out, requires, resolve, run
 
 pytestmark = pytest.mark.static
 
-CORE_PKGS = "agents graphs tools rag api analytics accessibility memory voice config".split()
+CORE_PKGS = "agents graphs tools rag api analytics accessibility memory config".split()
 
 
 @requires("ruff")

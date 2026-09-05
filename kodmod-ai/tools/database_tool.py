@@ -69,14 +69,12 @@ async def log_quiz_attempt(
 async def save_analytics_report(
     *,
     student_id: uuid.UUID | None = None,
-    classroom_id: uuid.UUID | None = None,
     report_type: str,
     payload: dict,
 ) -> uuid.UUID:
     async with async_session() as session:
         report = AnalyticsReport(
             student_id=student_id,
-            classroom_id=classroom_id,
             report_type=report_type,
             payload=payload,
         )

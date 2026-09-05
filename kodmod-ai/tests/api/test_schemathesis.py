@@ -3,7 +3,7 @@
 Spec: docs/testplan/04-api.md §10 (KM-API-100..102).
 
 Every 5xx Schemathesis finds is a real defect. The endpoints whose 5xx are
-already tracked (#1 quiz/voice, #7 exercise/generate, #16 non-UUID sub) are
+already tracked (#16 non-UUID sub) are
 excluded here so this stays a *regression* gate; they are asserted explicitly
 in test_quiz / test_voice / test_exercise / test_auth.
 """
@@ -24,8 +24,6 @@ BASE_URL = os.environ.get("KODMOD_API_BASE_URL", "http://localhost:8000")
 _EXCLUDE = {
     ("POST", "/quiz/start"),
     ("POST", "/quiz/submit"),
-    ("POST", "/voice/text"),
-    ("POST", "/voice/chat"),
     ("POST", "/exercise/generate"),
     # new finding: duplicate/empty email -> unhandled IntegrityError -> 500.
     # Asserted explicitly in test_student.py::test_km_api_040b_duplicate_email.

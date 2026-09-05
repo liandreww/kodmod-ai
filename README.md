@@ -1,6 +1,6 @@
-# KODMOD AI — Voice-First Agentic Learning Assistant
+# KODMOD AI, an agentic learning assistant
 
-> **Multimodal LangGraph-based AI ecosystem for visually impaired, blind, and low-vision learners.**
+> **LangGraph-based agentic tutor for visually impaired, blind, and low-vision learners.**
 
 KODMOD AI is a production-grade agentic learning assistant built around four collaborating clusters that together deliver conversational tutoring, adaptive spoken assessment, personalized content generation, and rich learning analytics — all through an audio-first interface.
 
@@ -23,7 +23,7 @@ KODMOD AI is a production-grade agentic learning assistant built around four col
 
 KODMOD AI is designed around three non-negotiable principles:
 
-- **Accessibility first** — every interaction can be completed with voice alone. No interface element is mandatory to *see*.
+- **Accessibility first.** Every interaction can be completed by voice or by keyboard alone. No interface element is mandatory to *see*.
 - **Agentic by design** — autonomous LangGraph agents collaborate, route, reflect, and self-correct rather than following fixed scripts.
 - **Adaptive learning** — a persistent student model drives difficulty, pacing, remediation, and recommendations in real time.
 
@@ -31,9 +31,9 @@ The system serves three primary actors:
 
 | Actor | Primary Interaction | Output |
 |---|---|---|
-| **Student** (visually impaired) | Voice conversation, spoken quizzes | Spoken explanations, audio feedback, personalized exercises |
-| **Teacher** | Web dashboard + voice queries | Class analytics, intervention recommendations, content authoring |
-| **Admin** | Configuration & monitoring | System health, content moderation, privacy controls |
+| **Student** (visually impaired) | Voice or typed conversation | Explanations and quizzes, read aloud in the browser on request |
+| **Teacher** | Web dashboard | Student progress, transcripts, subjects and curriculum uploads |
+| **Admin** | Web dashboard | Accounts and invitation codes |
 
 ---
 
@@ -66,8 +66,8 @@ The system serves three primary actors:
                   ┌────────────────────┼────────────────────┐
                   │                    │                    │
             ┌─────▼─────┐       ┌──────▼─────┐      ┌───────▼──────┐
-            │PostgreSQL │       │ pgvector / │      │    Redis     │
-            │+ pgvector │       │  Qdrant    │      │ (state/cache)│
+            │PostgreSQL │       │  pgvector  │      │    Redis     │
+            │           │       │  (in PG)   │      │ (state/cache)│
             └───────────┘       └────────────┘      └──────────────┘
 ```
 
@@ -75,18 +75,18 @@ The system serves three primary actors:
 
 ## 3. The Four Clusters
 
-### 🟦 Cluster 1 — Practices & Tutoring
-Voice-in → STT → Intent Router → (Tutoring Agent | Mini-Quiz) → TTS → Voice-out.
+### Cluster 1, Practices & Tutoring
+Intent Router → (Tutoring Agent | Mini-Quiz) → Accessibility.
 Conversational, Socratic, RAG-grounded tutoring with conversational memory.
 
-### 🟨 Cluster 2 — Quiz / Assessment
-Problem Generator → Quiz Agent → spoken delivery → student answer → STT → Scoring Agent → Quiz Analyzer → Student Model update.
-Adaptive difficulty driven by mastery scores.
+### Cluster 2, Quiz / Assessment
+Problem Generator → Quiz Agent → student answer → Scoring Agent → Quiz Analyzer →
+Student Model update. Adaptive difficulty driven by mastery scores.
 
-### 🟧 Cluster 3 — Content & Exercise Management
+### Cluster 3, Content & Exercise Management
 Curriculum KB + RAG retrieval + Exercise Generator. Feeds both clusters above with audio-friendly, accessibility-compliant content.
 
-### 🟩 Cluster 4 — Analytics & Reporting
+### Cluster 4, Analytics & Reporting
 Learning Analytics Agent aggregates every interaction and powers the Student Dashboard, Teacher Dashboard, and Recommendation Agent.
 
 > See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full per-cluster breakdown and data flow diagrams.
@@ -117,16 +117,14 @@ kodmod-ai/
 │   ├── problem_generator.py
 │   └── reflection_agent.py
 ├── graphs/                 # LangGraph graph definitions
-│   ├── main_graph.py       # Top-level orchestrator
-│   ├── tutoring_subgraph.py
-│   ├── quiz_subgraph.py
+│   ├── main_graph.py       # The one orchestrator; 13 nodes, no subgraphs
 │   └── state.py            # KODMODState TypedDict
 ├── tools/                  # Tools bound to agents
+│   ├── llm_client.py       # The only place a chat model is built
 │   ├── rag_tool.py
 │   ├── student_profile_tool.py
 │   ├── quiz_generator_tool.py
 │   ├── analytics_tool.py
-│   ├── voice_tool.py
 │   └── database_tool.py
 ├── memory/                 # Memory subsystems
 │   ├── short_term.py       # Redis-backed session memory
@@ -140,22 +138,27 @@ kodmod-ai/
 │   └── reranker.py
 ├── api/                    # FastAPI surface
 │   ├── main.py
+│   ├── security.py         # Password hashing + token issuance
+│   ├── dependencies.py     # current_user + the role gates
+│   ├── chat_service.py     # Shared middle of a conversation turn
 │   ├── routes/
-│   │   ├── voice.py
+│   │   ├── auth.py
+│   │   ├── chat.py
 │   │   ├── quiz.py
 │   │   ├── student.py
+│   │   ├── teacher.py
+│   │   ├── admin.py
+│   │   ├── subjects.py     # Subjects, concepts, document uploads
 │   │   ├── analytics.py
 │   │   ├── exercise.py
 │   │   └── content.py
 │   └── websockets/
-│       └── voice_stream.py
+│       └── chat_stream.py
 ├── database/               # SQLAlchemy + Alembic
-│   ├── schema.sql
-│   ├── models.py
+│   ├── models.py           # The whole schema; there is no schema.sql
 │   └── migrations/
 ├── models/                 # Pydantic domain models
-│   ├── student.py
-│   ├── session.py
+│   ├── user.py
 │   ├── quiz.py
 │   └── content.py
 ├── analytics/              # Analytics engine
@@ -171,14 +174,14 @@ kodmod-ai/
 │   ├── scoring.md
 │   ├── analyzer.md
 │   └── ...
-├── voice/                  # STT + TTS pipelines
-│   ├── stt.py
-│   ├── tts.py
-│   └── streaming.py
 ├── config/
 │   ├── settings.py
 │   └── logging.py
 ├── tests/
+├── scripts/
+│   ├── create_admin.py     # The first admin; registration needs a code
+│   ├── seed_curriculum.py
+│   └── ingest_documents.py
 ├── docker/
 │   ├── Dockerfile
 │   ├── docker-compose.yml
@@ -188,6 +191,13 @@ kodmod-ai/
 │   ├── API.md
 │   ├── ACCESSIBILITY.md
 │   └── DEPLOYMENT.md
+└── ...
+
+frontend-dev/               # Next.js frontend, sibling of kodmod-ai/
+├── src/app/                # Routes: /masuk /daftar /belajar /guru /admin
+│   └── api/                # transcribe + speak, proxying OpenAI server-side
+├── src/components/
+└── src/lib/
 └── scripts/
     ├── seed_curriculum.py
     └── ingest_documents.py
@@ -200,40 +210,54 @@ kodmod-ai/
 | Layer | Choice | Why |
 |---|---|---|
 | Orchestration | **LangGraph** + LangChain | Stateful multi-agent graphs with persistence |
-| LLM | Claude / GPT-4.1 / Llama 3 70B (configurable) | Quality + on-prem fallback |
-| STT | **Faster-Whisper** (on-device) + Deepgram (streaming) | Latency + cost balance |
-| TTS | **Piper** (offline) + ElevenLabs (premium) | Accessibility-first, low latency |
-| Embeddings | **BGE-M3** | Multilingual, top retrieval quality |
-| Vector DB | **pgvector** (or Qdrant for scale) | Co-located with relational data |
+| LLM | **OpenAI**, per-role model ids from `.env` | One provider, one code path, no dead branches |
+| Speech in and out | **OpenAI**, called from the browser via Next.js route handlers | Keeps audio off the API boundary; the key stays server-side |
+| Embeddings | **text-embedding-3-small**, 1536-dim | Handles Indonesian and English, no local GPU |
+| Reranker | **bge-reranker-v2-m3** (local, CPU) | Free, and degrades gracefully if it fails to load |
+| Vector DB | **pgvector** | Co-located with relational data |
 | Relational DB | PostgreSQL 16 | ACID + pgvector + JSONB |
-| Cache / State | Redis 7 | Session state, rate limits, pub/sub |
+| Cache / State | Redis 7 | Session state and the in-flight quiz cursor |
 | API | FastAPI + Uvicorn | Async, WebSocket-first |
-| Observability | LangSmith + Prometheus + Grafana + OpenTelemetry | End-to-end tracing |
-| Deploy | Docker + Kubernetes (Helm) | Horizontal scale, GPU node pools |
+| Frontend | Next.js 16 (App Router) + Tailwind v4 | See `frontend-dev/` |
+| Observability | LangSmith + Prometheus | End-to-end tracing |
+| Deploy | Docker Compose | See `docker/` |
 
 ---
 
 ## 7. Quick Start
 
+### Backend
+
 ```bash
-# 1. Clone and install
-git clone <repo> && cd kodmod-ai
+cd kodmod-ai
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. Start infrastructure
-docker compose -f docker/docker-compose.yml up -d
+cp .env.example .env          # fill in OPENAI_API_KEY and every LLM_*_MODEL
 
-# 3. Run migrations and seed
-alembic upgrade head
-python scripts/seed_curriculum.py
+make up                       # Postgres + Redis
+make migrate                  # create the schema (nothing is auto-loaded)
+make seed                     # sample curriculum
+make admin                    # the first admin account, prompts for a password
 
-# 4. Start the API
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-
-# 5. Open the voice client
-open http://localhost:8000/client
+make dev                      # http://localhost:8000
 ```
+
+The app refuses to start a turn while any `LLM_*_MODEL` is still `SET_ME_IN_ENV`,
+so a missing model id fails immediately with a readable message instead of
+halfway through a conversation.
+
+### Frontend
+
+```bash
+cd frontend-dev
+npm install
+cp .env.example .env.local    # fill in OPENAI_API_KEY
+npm run dev                   # http://localhost:3000
+```
+
+Sign in as the admin, mint an invitation code, and register a student or teacher
+with it.
 
 ---
 

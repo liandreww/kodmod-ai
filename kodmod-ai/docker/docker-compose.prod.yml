@@ -42,7 +42,6 @@ services:
       ENV: prod
       LOG_JSON: "true"
     volumes:
-      - kodmod-audio:/var/lib/kodmod/audio
       - kodmod-uploads:/var/lib/kodmod/uploads
     deploy:
       replicas: 3
@@ -87,7 +86,6 @@ services:
 volumes:
   kodmod-pgdata:
   kodmod-redisdata:
-  kodmod-audio:
   kodmod-uploads:
   kodmod-caddydata:
   kodmod-caddyconfig:

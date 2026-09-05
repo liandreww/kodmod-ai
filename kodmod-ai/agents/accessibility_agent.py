@@ -2,23 +2,26 @@
 KODMOD AI — Accessibility Agent
 ================================
 
-The final content gate before TTS synthesis. Takes whatever
-`generated_response` the upstream agents produced and rewrites it for
-accessible audio playback.
+The last node every speaking path runs through. Takes whatever
+`generated_response` the upstream agents produced and rewrites it to be
+comfortable to *listen* to, whether through a screen reader or the browser's
+text-to-speech.
 
 Transformations
 ---------------
 1. **De-visualize** — strip "see the figure", "as shown above", "look at",
    "the diagram below", etc. Replace with descriptive narration.
 2. **De-format** — remove markdown (`**bold**`, headers, bullets, asterisks)
-   that TTS engines read as "asterisk asterisk bold asterisk asterisk".
-3. **Number normalization** — "Bab 3.2" → "Bab tiga titik dua"; large
-   numbers handled carefully so screen-readers and TTS speak them naturally.
+   that a screen reader reads as "asterisk asterisk bold asterisk asterisk".
+3. **Number normalization** — "Bab 3.2" → "Bab 3 titik 2", so it is not read
+   as a date.
 4. **Sentence shortening** — splits sentences > ~25 words.
-5. **Pacing markup** — inserts SSML-style pauses for the TTS engine where
-   appropriate (after questions, before key terms).
-6. **Simplification** — if `accessibility_flags["simplify_language"]` is set
+5. **Simplification** — if `accessibility_flags["simplify_language"]` is set
    (e.g. for younger learners), invokes an LLM rewrite to grade-school level.
+
+Note there is no pacing markup. Speech synthesis happens in the browser, so
+anything this node emits is also *displayed*; SSML tags would leak onto the
+screen as literal text.
 
 The agent operates in two modes:
 * **Fast path** — pure regex / rule-based, runs in < 5 ms. Used by default.
@@ -65,7 +68,7 @@ async def accessibility_node(state: KODMODState) -> dict[str, Any]:
     if not text.strip():
         return {
             "accessible_response": "",
-            "next_action": "speak",
+            "next_action": "respond",
             "last_node": "accessibility",
         }
 
@@ -75,11 +78,11 @@ async def accessibility_node(state: KODMODState) -> dict[str, Any]:
 
     # ---- Step 1: fast-path rule transforms ------------------------------
     cleaned = _strip_markdown(text)
+    cleaned = _normalize_dashes(cleaned)
     cleaned = _replace_visual_refs(cleaned)
     cleaned = describe_visuals_in_text(cleaned)
     cleaned = _split_long_sentences(cleaned)
     cleaned = _normalize_numbers(cleaned)
-    cleaned = _add_ssml_breaks(cleaned)
 
     # ---- Step 2: optional LLM simplification ----------------------------
     if simplify or _should_simplify(cleaned):
@@ -88,13 +91,23 @@ async def accessibility_node(state: KODMODState) -> dict[str, Any]:
             target_grade_level=str(profile.get("target_grade", 7)),
         )
 
+    # A quiz-remediation explanation (scoring -> tutoring -> reflection) must
+    # say the student is still mid-quiz, appended last so reflection's rewrite
+    # can't drop it and no rewording can water it down.
+    if (
+        state.get("intent") == "quiz"
+        and state.get("quiz_session_id")
+        and state.get("last_node") in ("tutoring", "reflection")
+    ):
+        cleaned = cleaned.rstrip() + " Sekarang, coba jawab pertanyaan kuis tadi lagi."
+
     log.info(
         "Accessibility polish: %d -> %d chars (simplify=%s)", len(text), len(cleaned), simplify
     )
 
     return {
         "accessible_response": cleaned,
-        "next_action": "speak",
+        "next_action": "respond",
         "last_node": "accessibility",
     }
 
@@ -109,6 +122,17 @@ def _strip_markdown(text: str) -> str:
     text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)  # links → just label
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _normalize_dashes(text: str) -> str:
+    """Turn typographic dashes into punctuation that reads and speaks cleanly.
+
+    A screen reader announces an em-dash as a pause of unpredictable length, or
+    sometimes as nothing at all, and the product style avoids them in any case.
+    A dash used as a parenthetical or an aside becomes a comma.
+    """
+    text = re.sub(r"\s*[—–]\s*", ", ", text)
+    return re.sub(r",\s*,", ",", text)
 
 
 def _replace_visual_refs(text: str) -> str:
@@ -135,20 +159,10 @@ def _split_long_sentences(text: str) -> str:
 def _normalize_numbers(text: str) -> str:
     """
     Light normalization. Heavy lifting (e.g. 1.234.567 → 'satu juta dua ratus...')
-    happens in the TTS engine; here we just make decimals readable.
+    happens in the speech engine; here we just make decimals readable.
     """
-    # "Bab 3.2" → "Bab 3 titik 2" so TTS doesn't read it as a date
+    # "Bab 3.2" → "Bab 3 titik 2" so it is not read as a date
     text = re.sub(r"\b(\d+)\.(\d+)\b", r"\1 titik \2", text)
-    return text
-
-
-def _add_ssml_breaks(text: str) -> str:
-    """
-    Add lightweight SSML-like markers. The TTS layer converts these to its
-    engine-specific syntax (Piper, Azure, ElevenLabs all support breaks).
-    """
-    text = re.sub(r"([?!])\s+", r'\1 <break time="400ms"/> ', text)
-    text = re.sub(r"(\.) (?=[A-ZÄÜÖ])", r'.<break time="250ms"/> ', text)
     return text
 
 

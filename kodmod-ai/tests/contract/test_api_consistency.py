@@ -158,7 +158,19 @@ def test_km_contract_025_health_paths_have_no_prefix(resolved_routes) -> None:  
 # --------------------------------------------------------------------------- #
 def test_km_contract_026_router_prefixes(resolved_routes) -> None:  # type: ignore[no-untyped-def]
     paths = {path for _m, path, _r in resolved_routes}
-    for prefix in ("/voice/", "/quiz/", "/analytics/", "/exercise/", "/content/", "/ws/"):
+    for prefix in (
+        "/auth/",
+        "/chat/",
+        "/quiz/",
+        "/teacher/",
+        "/admin/",
+        "/subjects",
+        "/documents/",
+        "/analytics/",
+        "/exercise/",
+        "/content/",
+        "/ws/",
+    ):
         assert any(p.startswith(prefix) for p in paths), f"no route under {prefix}"
     assert "/student" in paths or any(p.startswith("/student/") for p in paths)
 

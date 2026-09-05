@@ -1,8 +1,10 @@
 """Stage 3 §10-11 — whole-graph invocation per intent (stub LLM, real DB).
 
 Spec: docs/testplan/03-integration.md §10 (KM-INT-140..146) and §11 (KM-INT-150..154).
-The §11 quiz multi-turn group is the quiz-feature definition-of-done and is
-currently unreachable from START (#11 / BUG-3) — those carry @known_bug.
+The §11 quiz multi-turn group is the quiz-feature definition-of-done (#11 / BUG-3,
+see docs/LAPORAN_BUG.md) — fixed by wiring scoring -> update_student_model ->
+{quiz_ask, quiz_analyzer} so a passing answer speaks the next question within
+the same turn instead of dead-ending after question 1.
 """
 
 from __future__ import annotations
@@ -206,7 +208,7 @@ async def test_km_int_146_initial_state_is_sufficient(
 
 
 # --------------------------------------------------------------------------- #
-# §11 — quiz multi-turn (target path, currently unreachable)  #11 / BUG-3
+# §11 — quiz multi-turn  #11 / BUG-3
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 async def quiz_started(graph, force_intent, clean_db, make_student, concept_ids):  # type: ignore[no-untyped-def]
@@ -222,19 +224,12 @@ async def quiz_started(graph, force_intent, clean_db, make_student, concept_ids)
     return graph, sid, str(st.id), final
 
 
-@pytest.mark.known_bug(
-    "#11 / BUG-3 — quiz start should produce >= 3 questions and set quiz_question"
-)
 async def test_km_int_150_quiz_start_produces_questions(quiz_started) -> None:  # type: ignore[no-untyped-def]
     _g, _sid, _stid, final = quiz_started
     assert len(final.get("quiz_questions", [])) >= 3
     assert final.get("quiz_question")
 
 
-@pytest.mark.known_bug(
-    "#11 / BUG-3 — the next utterance (an answer) re-enters at stt, and route_after_intent "
-    "has no 'quiz in progress' branch to reach scoring; quiz_attempts never grows"
-)
 async def test_km_int_151_answer_reaches_scoring(quiz_started) -> None:  # type: ignore[no-untyped-def]
     from graphs.state import initial_state
 
@@ -246,20 +241,26 @@ async def test_km_int_151_answer_reaches_scoring(quiz_started) -> None:  # type:
     assert out.get("quiz_score") is not None
 
 
-@pytest.mark.known_bug(
-    "#11 / #12 — scoring -> quiz_analyzer, route_after_scoring on QUIZ_PASS_THRESHOLD"
-)
 async def test_km_int_152_score_routes_on_threshold(quiz_started) -> None:  # type: ignore[no-untyped-def]
+    from config.settings import settings
     from graphs.state import initial_state
 
     g, sid, stid, _final = quiz_started
     turn2 = initial_state(session_id=sid, student_id=stid)
     turn2["user_input"] = "A"
     out = await g.ainvoke(turn2, config=_cfg(sid))
-    assert out.get("last_node") in {"quiz_analyzer", "update_student_model", "tutoring"}
+    assert out.get("quiz_score") is not None
+    # Every speaking path converges on "accessibility" (see CLAUDE.md) — the
+    # pass/fail branch from route_after_scoring is visible instead in whether
+    # the question index advanced (pass -> update_student_model -> quiz_ask)
+    # or stayed put (fail -> tutoring remediation, retry the same question).
+    assert out.get("last_node") == "accessibility"
+    if out.get("quiz_score", 0.0) >= settings.QUIZ_PASS_THRESHOLD:
+        assert out.get("current_question_index", 0) >= 1
+    else:
+        assert out.get("current_question_index", 0) == 0
 
 
-@pytest.mark.known_bug("#11 — route_after_analyzer advances to the next question while idx+1 < len")
 async def test_km_int_153_next_question(quiz_started) -> None:  # type: ignore[no-untyped-def]
     from graphs.state import initial_state
 
@@ -270,7 +271,6 @@ async def test_km_int_153_next_question(quiz_started) -> None:  # type: ignore[n
     assert out.get("current_question_index", 0) >= 1
 
 
-@pytest.mark.known_bug("#11 — finishing every question runs analytics and persists mastery")
 async def test_km_int_154_quiz_exhausted_runs_analytics(quiz_started) -> None:  # type: ignore[no-untyped-def]
     from database.session import async_session
     from graphs.state import initial_state

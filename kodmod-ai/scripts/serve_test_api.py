@@ -48,7 +48,6 @@ RELOAD_DIRS = [
     "analytics",
     "accessibility",
     "memory",
-    "voice",
     "config",
     "database",
     "prompts",

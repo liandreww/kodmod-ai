@@ -7,7 +7,7 @@ current session and produces:
 
 * Detected misconceptions (linked to concept IDs in the curriculum graph)
 * Per-concept weakness scores
-* A short, audio-friendly summary that the Hasil Analisis → TTS path will
+* A short, audio-friendly summary that the Hasil Analisis path will
   speak back to the student (matches the Quiz/Assessment cluster diagram).
 * Remediation recommendations passed to the recommendation_agent later.
 
@@ -23,7 +23,7 @@ from collections import defaultdict
 from typing import Any
 
 from graphs.state import KODMODState, QuizQuestion
-from tools.llm_client import get_scoring_llm
+from tools.llm_client import get_scoring_llm, language_instruction
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ async def quiz_analyzer_node(state: KODMODState) -> dict[str, Any]:
     llm = get_scoring_llm()
     response = await llm.ainvoke(
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + language_instruction()},
             {"role": "user", "content": user_block},
         ]
     )

@@ -383,21 +383,21 @@ async def test_km_int_122_reflection_node_parse_fail(monkeypatch) -> None:  # ty
 
 
 # --------------------------------------------------------------------------- #
-# stt / tts (text-mode)
+# accessibility is the terminal node for every speaking path
 # --------------------------------------------------------------------------- #
-async def test_km_int_123_stt_node_passthrough() -> None:
-    from voice.stt import stt_node
+async def test_km_int_123_accessibility_is_the_last_node() -> None:
+    """There is no speech node behind this one; whatever it emits is delivered."""
+    from agents.accessibility_agent import accessibility_node
 
-    out = await stt_node({"user_input": "halo kodmod", "audio_input_path": ""})
-    assert out["transcribed_text"] == "halo kodmod"
-    assert out["next_action"] == "route_intent"
-    assert out["last_node"] == "stt"
+    out = await accessibility_node({"generated_response": "**Halo**, apa kabar?"})
+    assert out["last_node"] == "accessibility"
+    assert out["next_action"] == "respond"
+    assert "**" not in out["accessible_response"]
 
 
-async def test_km_int_124_tts_node_noop() -> None:
-    from voice.tts import tts_node
+async def test_km_int_124_accessibility_handles_empty_input() -> None:
+    from agents.accessibility_agent import accessibility_node
 
-    out = await tts_node({"accessible_response": "Halo.", "generated_response": "Halo."})
-    assert out["audio_response_path"] == ""
-    assert out["next_action"] == "end"
-    assert out["last_node"] == "tts"
+    out = await accessibility_node({"generated_response": ""})
+    assert out["accessible_response"] == ""
+    assert out["next_action"] == "respond"

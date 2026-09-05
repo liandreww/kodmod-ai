@@ -5,7 +5,9 @@ KODMOD AI — Content Routes
 - GET  /content/concepts                  -> list concepts
 - GET  /content/concepts/{id}             -> concept details
 - GET  /content/concepts/{id}/lessons     -> lessons for a concept
-- POST /content/retrieve                  -> RAG retrieval (debug / direct)
+- POST /content/retrieve                  -> RAG retrieval, teachers only
+
+Every endpoint here requires a signed-in account.
 """
 
 from __future__ import annotations
@@ -17,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import db_session
-from database.models import Concept, Lesson
+from api.dependencies import current_user, db_session, require_teacher
+from database.models import Concept, Lesson, User
 from models.content import (
     ConceptOut,
     ContentRetrieveRequest,
@@ -35,6 +37,7 @@ router = APIRouter()
 async def list_concepts(
     subject_id: uuid.UUID | None = Query(None),
     session: AsyncSession = Depends(db_session),
+    _: User = Depends(current_user),
 ) -> list[Concept]:
     """List curriculum concepts, optionally filtered by subject."""
     stmt = select(Concept)
@@ -47,6 +50,7 @@ async def list_concepts(
 async def get_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
+    _: User = Depends(current_user),
 ) -> Concept:
     """Return details for a single concept by id."""
     concept = await session.get(Concept, concept_id)
@@ -59,6 +63,7 @@ async def get_concept(
 async def lessons_for_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
+    _: User = Depends(current_user),
 ) -> list[Lesson]:
     """List the lessons that belong to a concept."""
     rows = (
@@ -70,10 +75,14 @@ async def lessons_for_concept(
 
 
 @router.post("/retrieve", response_model=ContentRetrieveResponse)
-async def retrieve_content(payload: ContentRetrieveRequest) -> ContentRetrieveResponse:
-    """Run RAG retrieval directly and return the grounding chunks (debug/tooling)."""
+async def retrieve_content(
+    payload: ContentRetrieveRequest,
+    _: User = Depends(require_teacher),
+) -> ContentRetrieveResponse:
+    """Run retrieval directly, so a teacher can check that an upload is searchable."""
     chunks = await retrieve(
         payload.query,
+        subject_id=payload.subject_id,
         top_k=payload.top_k,
         language=payload.language,
     )

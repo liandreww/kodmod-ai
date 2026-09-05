@@ -17,7 +17,6 @@ import pytest
 pytestmark = pytest.mark.contract
 
 NAMED_NODES = {
-    "stt",
     "intent_router",
     "rag_retrieval",
     "tutoring",
@@ -31,7 +30,6 @@ NAMED_NODES = {
     "recommendation",
     "accessibility",
     "reflection",
-    "tts",
 }
 START = "__start__"
 END = "__end__"
@@ -79,7 +77,7 @@ async def test_km_contract_030_compiles_async() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# KM-CONTRACT-031 — exactly the 15 named nodes
+# KM-CONTRACT-031 — exactly the 13 named nodes
 # --------------------------------------------------------------------------- #
 async def test_km_contract_031_node_set(compiled) -> None:  # type: ignore[no-untyped-def]
     nodes = set(compiled.builder.nodes) - {START, END}
@@ -89,11 +87,6 @@ async def test_km_contract_031_node_set(compiled) -> None:  # type: ignore[no-un
 # --------------------------------------------------------------------------- #
 # KM-CONTRACT-032 — every node reachable from START
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#11 / BUG-3 — mini_quiz has no inbound edge and scoring / quiz_analyzer / "
-    "update_student_model are unreachable from START (no 'quiz in progress' branch "
-    "in route_after_intent, and the answer->score edge is missing)"
-)
 async def test_km_contract_032_all_nodes_reachable_from_start(compiled) -> None:  # type: ignore[no-untyped-def]
     adj = _adjacency(compiled.builder)
     reachable = _reachable(adj)
@@ -111,17 +104,23 @@ async def test_km_contract_033_no_dangling_nodes(compiled) -> None:  # type: ign
 
 
 # --------------------------------------------------------------------------- #
-# KM-CONTRACT-034 — interrupt_after is conditional on the checkpointer
+# KM-CONTRACT-034 — the graph never interrupts, with or without a checkpointer
 # --------------------------------------------------------------------------- #
-async def test_km_contract_034_interrupt_after_conditional() -> None:
+async def test_km_contract_034_no_interrupts() -> None:
+    """A turn must always run to completion in one invocation.
+
+    Reflection is an inline quality gate, not a human-in-the-loop pause, so
+    neither caller has to drive a resume loop.
+    """
     from langgraph.checkpoint.memory import InMemorySaver
 
     from graphs.main_graph import build_kodmod_graph
 
     none_cp = await build_kodmod_graph(checkpointer=None)
     with_cp = await build_kodmod_graph(checkpointer=InMemorySaver())
-    assert list(none_cp.interrupt_after_nodes) == []
-    assert list(with_cp.interrupt_after_nodes) == ["reflection"]
+    for graph in (none_cp, with_cp):
+        assert list(graph.interrupt_after_nodes) == []
+        assert list(graph.interrupt_before_nodes) == []
 
 
 # --------------------------------------------------------------------------- #

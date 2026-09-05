@@ -7,7 +7,7 @@ the database (long-term memory) plus current-session state, computes
 performance metrics, and prepares two output products:
 
 * `analytics_summary` in state — used by the Recommendation Agent and (after
-  TTS) read aloud to the student.
+  the browser) read aloud to the student.
 * Persistent rows in `analytics_reports` — surfaced on the Student Dashboard
   and Teacher Dashboard.
 
@@ -101,7 +101,7 @@ async def analytics_node(state: KODMODState) -> dict[str, Any]:
 
 
 def _spoken_summary(s: AnalyticsSummary) -> str:
-    """Render analytics as 3–4 sentences friendly to TTS playback."""
+    """Render analytics as 3–4 sentences that are comfortable to hear."""
     mastery_pct = round(s.get("overall_mastery", 0.0) * 100)
     streak = s.get("streak_days", 0)
     sessions = s.get("sessions_total", 0)

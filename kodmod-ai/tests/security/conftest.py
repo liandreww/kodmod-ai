@@ -81,7 +81,7 @@ async def db_cleanup():  # type: ignore[no-untyped-def]
         return
     async with async_session() as s:
         for table, _id in reversed(trash):
-            if table == "students":
+            if table == "users":
                 for child in _children:
                     try:
                         await s.execute(
@@ -99,45 +99,54 @@ async def db_cleanup():  # type: ignore[no-untyped-def]
 
 
 @pytest.fixture
-async def student_factory(db_cleanup):  # type: ignore[no-untyped-def]
-    from database.models import Student
+async def user_factory(db_cleanup):  # type: ignore[no-untyped-def]
+    from api.security import hash_password
+    from database.models import User
     from database.session import async_session
+    from tests.conftest import TEST_PASSWORD
 
-    async def _make(**over):  # type: ignore[no-untyped-def]
-        sid = over.pop("id", uuid.uuid4())
+    async def _make(role: str = "student", **over):  # type: ignore[no-untyped-def]
+        uid = over.pop("id", uuid.uuid4())
         async with async_session() as s:
-            row = Student(
-                id=sid,
-                full_name=over.pop("full_name", "Siswa Sec"),
+            row = User(
+                id=uid,
+                username=over.pop("username", f"{role}-sec-{uid.hex[:8]}"),
+                password_hash=hash_password(TEST_PASSWORD),
+                role=role,
+                full_name=over.pop("full_name", f"{role.title()} Sec"),
                 accessibility_profile="blind",
                 preferred_language=over.pop("preferred_language", "id"),
             )
             s.add(row)
             await s.flush()
             s.expunge(row)
-        db_cleanup.append(("students", str(sid)))
-        return row, _token(sid, "student")
+        db_cleanup.append(("users", str(uid)))
+        return row, _token(uid, role)
 
     return _make
 
 
 @pytest.fixture
-async def teacher_factory(db_cleanup):  # type: ignore[no-untyped-def]
-    from database.models import Teacher
-    from database.session import async_session
-
+async def student_factory(user_factory):  # type: ignore[no-untyped-def]
     async def _make(**over):  # type: ignore[no-untyped-def]
-        tid = over.pop("id", uuid.uuid4())
-        async with async_session() as s:
-            s.add(
-                Teacher(
-                    id=tid,
-                    full_name=over.pop("full_name", "Guru Sec"),
-                    email=over.pop("email", f"guru-{uuid.uuid4().hex[:8]}@example.test"),
-                )
-            )
-        db_cleanup.append(("teachers", str(tid)))
-        return tid, _token(tid, "teacher")
+        return await user_factory("student", **over)
+
+    return _make
+
+
+@pytest.fixture
+async def teacher_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**over):  # type: ignore[no-untyped-def]
+        over.pop("email", None)
+        return await user_factory("teacher", **over)
+
+    return _make
+
+
+@pytest.fixture
+async def admin_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**over):  # type: ignore[no-untyped-def]
+        return await user_factory("admin", **over)
 
     return _make
 

@@ -11,14 +11,14 @@ Behaviours implemented
    explain at "scaffolded", "standard", or "advanced" depth.
 2. **Socratic questioning** — at the end of each explanation, asks one
    follow-up question to probe understanding (this is what triggers the loop
-   back to STT in the diagram).
+   back to the student in the diagram).
 3. **Misconception logging** — if the student's input contradicts curriculum
    facts retrieved by RAG, the agent appends to `misconceptions_detected`
    so the analytics cluster can act on it later.
 4. **Audio-friendly** — explicitly avoids visual references ("look at the
    diagram", "as you can see"); the Accessibility Agent further polishes the
-   output before TTS.
-5. **Streaming** — uses `astream` so the WebSocket can begin TTS synthesis
+   output before it is delivered.
+5. **Streaming** — uses `astream` so the WebSocket can forward tokens
    on the first sentence rather than waiting for the full response.
 """
 
@@ -30,7 +30,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from graphs.state import KODMODState, RetrievedDoc
-from tools.llm_client import get_tutor_llm
+from tools.llm_client import get_tutor_llm, language_instruction
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ TONE
 - If frustration is detected, slow down and offer a brief encouragement.
 
 OUTPUT
-- Plain prose. No markdown, no headers, no bullet symbols. The TTS engine
+- Plain prose. No markdown, no headers, no bullet symbols. A screen reader
   reads literal text.
 """
 
@@ -94,17 +94,39 @@ async def tutoring_node(state: KODMODState) -> dict[str, Any]:
             history_msgs.append(AIMessage(content=content))
 
     # ---- Compose system message with adaptive hints ----------------------
+    is_remediation = bool(state.get("intent") == "quiz" and state.get("quiz_session_id"))
     sys_with_meta = (
         SYSTEM_PROMPT
         + f"\n\n<mastery>{mastery:.2f}</mastery>"
         + f"\n<emotion>{emotion}</emotion>"
         + (f"\n<concept>{concept_id}</concept>" if concept_id else "")
+        + (
+            "\n\nThis is a QUIZ REMEDIATION turn: the student just answered the quiz "
+            "question below incorrectly. Explain why their answer was wrong and clarify "
+            "the underlying concept using the question and options given — never ask the "
+            "student to resend the question, it is provided below."
+            if is_remediation
+            else ""
+        )
+        + language_instruction()
+    )
+
+    quiz_question = state.get("quiz_question") or {}
+    quiz_block = (
+        "\n\n--- Quiz question just answered (explain using this) ---\n"
+        f"Question: {quiz_question.get('text', '')}\n"
+        f"Options: {quiz_question.get('options') or '(none — open-ended question)'}\n"
+        f"Correct answer: {quiz_question.get('expected_answer', '')}\n"
+        f"Student's answer: {state.get('student_answer', '')}"
+        if is_remediation and quiz_question
+        else ""
     )
 
     user_msg = HumanMessage(
         content=(
             f"{user_input}\n\n"
             f"--- Curriculum context (use only what's relevant) ---\n{context_block}"
+            f"{quiz_block}"
         )
     )
 

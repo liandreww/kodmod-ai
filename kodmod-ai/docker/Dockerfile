@@ -6,9 +6,8 @@
 #   1. `builder`  — installs deps into a venv (cacheable layer)
 #   2. `runtime`  — slim final image with the venv copied in
 #
-# CPU-only image by default. For GPU inference (faster-whisper on cuda),
-# build the variant with `--build-arg BASE_IMAGE=nvidia/cuda:12.4.1-runtime-ubuntu22.04`
-# and add torch with the matching cuda wheel.
+# CPU-only. The only local model left is the cross-encoder reranker, which is
+# small enough to run on CPU; every other model is an OpenAI API call.
 # ============================================================================
 
 ARG BASE_IMAGE=python:3.11-slim-bookworm
@@ -81,8 +80,8 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --from=builder /build /app
 
-# Writable mount points for audio + uploads.
-RUN mkdir -p /var/lib/kodmod/audio /var/lib/kodmod/uploads \
+# Writable mount point for teacher-uploaded curriculum documents.
+RUN mkdir -p /var/lib/kodmod/uploads \
  && chown -R ${APP_USER}:${APP_USER} /var/lib/kodmod /app
 
 USER ${APP_USER}

@@ -3,7 +3,7 @@
 Spec: docs/testplan/06-e2e.md (KM-E2E-001..006, 010).
 
 The tutoring / quiz / RAG / meta-command journeys all enter through
-``/voice/text`` or ``/quiz/*``, which currently 500 on ``student.profile`` (#1)
+``/chat/message`` or ``/quiz/*``, which currently 500 on ``student.profile`` (#1)
 and the quiz field mismatch (#5) / unreachable scoring path (#11) — so those
 journeys carry @known_bug. The analytics journey (KM-E2E-003) works today.
 """
@@ -31,17 +31,17 @@ async def test_km_e2e_001_onboarding_tutoring(client, auth_headers) -> None:  # 
     hdr = auth_headers(_token(sid, "student"))
 
     r1 = await client.post(
-        "/voice/text", headers=hdr, data={"text": "tolong jelaskan apa itu pecahan"}
+        "/chat/message", headers=hdr, json={"text": "tolong jelaskan apa itu pecahan"}
     )
     assert r1.status_code == 200
     body = r1.json()
-    assert body["response_text"] and body["audio_uri"] == ""
-    assert_accessible(body["response_text"])
+    assert body["text"] and body["audio_uri"] == ""
+    assert_accessible(body["text"])
 
     r2 = await client.post(
-        "/voice/text", headers=hdr, data={"text": "ulangi", "session_id": body["session_id"]}
+        "/chat/message", headers=hdr, json={"text": "ulangi", "session_id": body["session_id"]}
     )
-    assert r2.json()["response_text"] == body["response_text"]
+    assert r2.json()["text"] == body["text"]
 
 
 # --------------------------------------------------------------------------- #
@@ -109,18 +109,15 @@ async def test_km_e2e_003_student_analytics(
 
 
 # --------------------------------------------------------------------------- #
-# KM-E2E-004 — teacher classroom alerts
+# KM-E2E-004 — teacher cohort alerts
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#20 — classroom analytics/alerts need the missing classroom_enrollment table"
-)
-async def test_km_e2e_004_classroom_alerts(client, teacher_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
-    import uuid
-
+async def test_km_e2e_004_cohort_alerts(client, teacher_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
     _tid, tok = await teacher_factory()
-    r = await client.get(f"/analytics/classroom/{uuid.uuid4()}/alerts", headers=auth_headers(tok))
+    r = await client.get("/analytics/cohort/alerts", headers=auth_headers(tok))
     assert r.status_code == 200
-    assert {"alerts", "per_student", "headline"} <= set(r.json())
+    body = r.json()
+    assert {"alerts", "summary"} <= set(body)
+    assert isinstance(body["summary"]["students"], list)
 
 
 # --------------------------------------------------------------------------- #
@@ -130,30 +127,31 @@ async def test_km_e2e_005_rag_grounded(client, student_factory, concept_ids, aut
     sid, tok = await student_factory()
     hdr = auth_headers(tok)
 
+    # Retrieval is a teacher tool now, so a student token must be turned away.
     ret = await client.post(
         "/content/retrieve",
+        headers=hdr,
         json={"query": "apa definisi pecahan menurut modul", "top_k": 4, "language": "id"},
     )
-    assert ret.status_code == 200  # retrieval itself works unauth today
+    assert ret.status_code == 403
 
     ans = await client.post(
-        "/voice/text", headers=hdr, data={"text": "menurut modul, apa definisi pecahan?"}
+        "/chat/message", headers=hdr, json={"text": "menurut modul, apa definisi pecahan?"}
     )
     assert ans.status_code == 200
-    assert_accessible(ans.json()["response_text"])
+    assert_accessible(ans.json()["text"])
 
 
 # --------------------------------------------------------------------------- #
 # KM-E2E-006 — meta voice commands mid-session
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug("#1 — every /voice/text turn 500s on student.profile before intent routing")
 async def test_km_e2e_006_meta_commands(client, student_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
     sid, tok = await student_factory()
     hdr = auth_headers(tok)
 
-    stop = await client.post("/voice/text", headers=hdr, data={"text": "berhenti"})
+    stop = await client.post("/chat/message", headers=hdr, json={"text": "berhenti"})
     assert stop.status_code == 200
-    assert stop.json()["response_text"].strip()
+    assert stop.json()["text"].strip()
 
-    helpr = await client.post("/voice/text", headers=hdr, data={"text": "bantuan"})
+    helpr = await client.post("/chat/message", headers=hdr, json={"text": "bantuan"})
     assert helpr.status_code == 200

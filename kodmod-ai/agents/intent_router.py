@@ -29,7 +29,7 @@ from typing import cast
 from pydantic import BaseModel, Field, ValidationError
 
 from graphs.state import Intent, KODMODState
-from tools.llm_client import get_router_llm
+from tools.llm_client import get_router_llm, language_instruction
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,9 @@ class IntentDecision(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str = Field(default="", description="One-sentence explanation")
     detected_emotion: str = Field(default="neutral")
+    topic: str = Field(
+        default="", description="Subject/topic named by the student, if any (else empty)"
+    )
 
 
 SYSTEM_PROMPT = """\
@@ -60,14 +63,20 @@ intent from this list:
 Also detect emotional state: neutral | engaged | confused | frustrated |
 fatigued | motivated.
 
+When the intent is quiz, exercise_request, or tutoring, also extract the
+subject/topic the student named, in their own words (e.g. "pecahan",
+"tata surya"). Leave it empty if no topic is named (e.g. "lanjutkan",
+"ulangi soal terakhir").
+
 Return ONLY a JSON object, no prose:
-{"intent": "...", "confidence": 0.0-1.0, "reasoning": "...", "detected_emotion": "..."}
+{"intent": "...", "confidence": 0.0-1.0, "reasoning": "...",
+ "detected_emotion": "...", "topic": "..."}
 """
 
 
 async def intent_router_node(state: KODMODState) -> dict:
-    """LangGraph node — runs after STT, before any cluster logic."""
-    text = state.get("transcribed_text") or state.get("user_input", "")
+    """LangGraph node — the graph entry point, before any cluster logic."""
+    text = state.get("user_input", "")
     if not text.strip():
         # No utterance to classify (e.g. a REST entrypoint that drives the graph
         # directly). Honour a concrete intent the caller already set instead of
@@ -81,11 +90,12 @@ async def intent_router_node(state: KODMODState) -> dict:
         }
 
     # --- Hard short-circuit: if we're mid-quiz, the utterance IS the answer.
-    # The graph re-enters at `stt` with a fresh state every turn, so the quiz
-    # progress may only exist in short-term memory — rehydrate it here.
+    # The graph re-enters at `intent_router` with a fresh state every turn, so
+    # the quiz progress may only exist in short-term memory — rehydrate it here.
     quiz_session_id = state.get("quiz_session_id")
     quiz_questions = state.get("quiz_questions") or []
     question_index = state.get("current_question_index", 0)
+    question_attempts = state.get("current_question_attempts", 0)
     quiz_attempts = state.get("quiz_attempts", [])
     cumulative_quiz_score = state.get("cumulative_quiz_score", 0.0)
     rehydrated = False
@@ -102,6 +112,7 @@ async def intent_router_node(state: KODMODState) -> dict:
             quiz_session_id = sess.get("quiz_session_id", "")
             quiz_questions = sess.get("quiz_questions", [])
             question_index = sess.get("current_question_index", 0)
+            question_attempts = sess.get("current_question_attempts", 0)
             quiz_attempts = sess.get("quiz_attempts", [])
             cumulative_quiz_score = sess.get("cumulative_quiz_score", 0.0)
             rehydrated = True
@@ -124,6 +135,7 @@ async def intent_router_node(state: KODMODState) -> dict:
                     "quiz_session_id": quiz_session_id,
                     "quiz_questions": quiz_questions,
                     "current_question_index": question_index,
+                    "current_question_attempts": question_attempts,
                     "quiz_question": quiz_questions[question_index],
                     "quiz_attempts": quiz_attempts,
                     "cumulative_quiz_score": cumulative_quiz_score,
@@ -135,7 +147,7 @@ async def intent_router_node(state: KODMODState) -> dict:
     llm = get_router_llm()
     response = await llm.ainvoke(
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + language_instruction()},
             {"role": "user", "content": text},
         ]
     )
@@ -161,7 +173,7 @@ async def intent_router_node(state: KODMODState) -> dict:
         decision.reasoning,
     )
 
-    return {
+    out: dict = {
         "intent": decision.intent,
         "intent_confidence": decision.confidence,
         "user_input": text,
@@ -169,6 +181,12 @@ async def intent_router_node(state: KODMODState) -> dict:
         "next_action": "route_intent",
         "last_node": "intent_router",
     }
+    # Only overwrite the topic already in state when the student actually named
+    # a new one — a plain follow-up ("lanjutkan") should not clobber the topic
+    # an in-progress tutoring/quiz flow is already tracking.
+    if decision.topic.strip():
+        out["current_topic"] = decision.topic.strip()
+    return out
 
 
 # ---------------------------------------------------------------------------

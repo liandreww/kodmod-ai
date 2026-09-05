@@ -25,7 +25,7 @@ import logging
 from typing import Any
 
 from graphs.state import AnalyticsSummary, KODMODState
-from tools.llm_client import get_recommendation_llm
+from tools.llm_client import get_recommendation_llm, language_instruction
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ async def recommendation_node(state: KODMODState) -> dict[str, Any]:
     llm = get_recommendation_llm()
     response = await llm.ainvoke(
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + language_instruction()},
             {"role": "user", "content": user_block},
         ]
     )

@@ -9,7 +9,7 @@ session helpers so agents can call `load_profile(student_id)` /
 This is the canonical store for:
 - Mastery scores per concept (BKT-style)
 - Detected misconceptions
-- Learning preferences (preferred_language, voice_settings)
+- Learning preferences (preferred_language, accessibility_profile)
 - Aggregate statistics used by the dashboards
 """
 
@@ -28,7 +28,7 @@ from database.models import (
     MasteryScore,
     Misconception,
     Recommendation,
-    Student,
+    User,
 )
 from database.session import async_session
 
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 async def load_profile(student_id: uuid.UUID) -> dict:
     """Return a flat dict matching `LearningProfile` TypedDict."""
     async with async_session() as session:
-        student = await session.get(Student, student_id)
+        student = await session.get(User, student_id)
         if not student:
             return {}
 
@@ -62,7 +62,6 @@ async def load_profile(student_id: uuid.UUID) -> dict:
             "full_name": student.full_name,
             "preferred_language": student.preferred_language,
             "accessibility_profile": student.accessibility_profile,
-            "voice_settings": student.voice_settings or {},
             "mastery": mastery,
             "streak_days": streak_days,
         }
@@ -199,7 +198,6 @@ async def log_interaction(
     role: str,
     text: str,
     intent: str | None = None,
-    audio_path: str | None = None,
     latency_ms: int | None = None,
     metadata: dict | None = None,
 ) -> None:
@@ -210,7 +208,6 @@ async def log_interaction(
                 role=role,
                 text=text,
                 intent=intent,
-                audio_path=audio_path,
                 latency_ms=latency_ms,
                 metadata_=metadata or {},
             )

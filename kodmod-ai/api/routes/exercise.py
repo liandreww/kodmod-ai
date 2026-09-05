@@ -13,12 +13,12 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import current_student, db_session
-from database.models import Exercise, Student
+from api.dependencies import db_session, require_student
+from database.models import Exercise, User
 from models.content import (
     ExerciseGenerateRequest,
     ExerciseGenerateResponse,
@@ -32,26 +32,23 @@ router = APIRouter()
 @router.post("/generate", response_model=ExerciseGenerateResponse)
 async def generate_exercises(
     payload: ExerciseGenerateRequest,
-    student: Student = Depends(current_student),
+    student: User = Depends(require_student),
 ) -> ExerciseGenerateResponse:
-    """Generate an on-demand adaptive practice batch for the student."""
-    if student.id != payload.student_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Mismatched student_id")
-
+    """Generate an on-demand adaptive practice batch for the signed-in student."""
     # Lazy import to avoid circular ref between agents and routes.
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from agents.problem_generator import generate_questions_for_student
 
     questions = await generate_questions_for_student(
-        student_id=payload.student_id,
+        student_id=student.id,
         concept_id=payload.concept_id,
         n=payload.n_questions,
         difficulty_hint=payload.difficulty,
     )
     return ExerciseGenerateResponse(
         exercises=questions,
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(UTC),
     )
 
 
@@ -59,7 +56,7 @@ async def generate_exercises(
 async def exercises_by_concept(
     concept_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
-    _student: Student = Depends(current_student),
+    _: User = Depends(require_student),
 ) -> list[Exercise]:
     """List the audio-friendly teacher-authored exercises for a concept."""
     rows = (

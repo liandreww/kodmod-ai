@@ -74,15 +74,16 @@ async def db_cleanup():  # type: ignore[no-untyped-def]
 
     from database.session import async_session, init_db
 
-    # Child tables that reference students.id without ON DELETE CASCADE in the
-    # ORM-built test schema — clear these before deleting a students row.
-    # (quiz_sessions cascades to quiz_attempts / quiz_questions on its own.)
-    _student_children = (
+    # Learner-owned tables all cascade from users.id now, but they are deleted
+    # explicitly anyway so a broken cascade surfaces as a test failure rather
+    # than as rows quietly surviving between runs.
+    _user_children = (
         "analytics_reports",
         "recommendations",
         "misconceptions",
         "mastery_scores",
         "quiz_sessions",
+        "learning_sessions",
     )
 
     await init_db()
@@ -91,57 +92,89 @@ async def db_cleanup():  # type: ignore[no-untyped-def]
     if trash:
         async with async_session() as s:
             for table, _id in reversed(trash):
-                if table == "students":
-                    for child in _student_children:
+                if table == "users":
+                    for child in _user_children:
                         await s.execute(
                             text(f"DELETE FROM {child} WHERE student_id = :id"), {"id": _id}
                         )
                 await s.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": _id})
 
 
-@pytest.fixture
-async def student_factory(db_cleanup):  # type: ignore[no-untyped-def]
-    from database.models import Student
-    from database.session import async_session
+_DEFAULT_NAMES = {"student": "Siswa Uji", "teacher": "Guru Uji", "admin": "Admin Uji"}
 
-    async def _make(**over):  # type: ignore[no-untyped-def]
+
+@pytest.fixture
+async def user_factory(db_cleanup):  # type: ignore[no-untyped-def]
+    """Commit a real `users` row (the host api reads the same DB) plus its token."""
+    from api.security import hash_password
+    from database.models import User
+    from database.session import async_session
+    from tests.conftest import TEST_PASSWORD
+
+    async def _make(role: str = "student", **over):  # type: ignore[no-untyped-def]
+        uid = over.pop("id", uuid.uuid4())
         data = dict(
-            id=over.pop("id", uuid.uuid4()),
-            full_name=over.pop("full_name", "Siswa Uji"),
+            id=uid,
+            username=over.pop("username", f"{role}-{uid.hex[:8]}"),
+            password_hash=hash_password(TEST_PASSWORD),
+            role=role,
+            full_name=over.pop("full_name", _DEFAULT_NAMES.get(role, "Pengguna Uji")),
             accessibility_profile=over.pop("accessibility_profile", "blind"),
             preferred_language=over.pop("preferred_language", "id"),
         )
         data.update(over)
         async with async_session() as s:
-            row = Student(**data)
+            row = User(**data)
             s.add(row)
             await s.flush()
             s.expunge(row)
-        db_cleanup.append(("students", str(data["id"])))
-        return row, _token(data["id"], "student")
+        db_cleanup.append(("users", str(uid)))
+        return row, _token(uid, role)
 
     return _make
 
 
 @pytest.fixture
-async def teacher_factory(db_cleanup):  # type: ignore[no-untyped-def]
-    from database.models import Teacher
+async def student_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**over):  # type: ignore[no-untyped-def]
+        return await user_factory("student", **over)
+
+    return _make
+
+
+@pytest.fixture
+async def teacher_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**over):  # type: ignore[no-untyped-def]
+        over.pop("email", None)  # accounts are identified by username now
+        return await user_factory("teacher", **over)
+
+    return _make
+
+
+@pytest.fixture
+async def admin_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**over):  # type: ignore[no-untyped-def]
+        return await user_factory("admin", **over)
+
+    return _make
+
+
+@pytest.fixture
+async def subject_factory(db_cleanup):  # type: ignore[no-untyped-def]
+    from database.models import Subject
     from database.session import async_session
 
     async def _make(**over):  # type: ignore[no-untyped-def]
-        data = dict(
-            id=over.pop("id", uuid.uuid4()),
-            full_name=over.pop("full_name", "Guru Uji"),
-            email=over.pop("email", f"guru-{uuid.uuid4().hex[:8]}@example.test"),
-        )
+        sid = over.pop("id", uuid.uuid4())
+        data = dict(id=sid, name=over.pop("name", f"Mapel {sid.hex[:6]}"))
         data.update(over)
         async with async_session() as s:
-            row = Teacher(**data)
+            row = Subject(**data)
             s.add(row)
             await s.flush()
             s.expunge(row)
-        db_cleanup.append(("teachers", str(data["id"])))
-        return row, _token(data["id"], "teacher")
+        db_cleanup.append(("subjects", str(sid)))
+        return row
 
     return _make
 

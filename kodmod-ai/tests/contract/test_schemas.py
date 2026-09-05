@@ -23,80 +23,86 @@ pytestmark = pytest.mark.contract
 
 
 # --------------------------------------------------------------------------- #
-# KM-CONTRACT-001 / 002 — StudentCreate
+# KM-CONTRACT-001 / 002 — RegisterRequest
 # --------------------------------------------------------------------------- #
-def test_km_contract_001_student_create_valid() -> None:
-    from models.student import StudentCreate
+def test_km_contract_001_register_request_valid() -> None:
+    from models.user import RegisterRequest
 
-    s = StudentCreate(full_name="Siswa Uji")
-    assert s.full_name == "Siswa Uji"
-    assert s.accessibility_profile == "blind"
-    assert s.preferred_language == "id"
-    assert s.voice_settings == {}  # default_factory=dict
+    r = RegisterRequest(
+        username="Budi.S",
+        password="rahasia-panjang",
+        full_name="Budi Santoso",
+        role="student",
+        invitation_code="abc123",
+    )
+    # Usernames are compared case-insensitively, codes are shown in upper case.
+    assert r.username == "budi.s"
+    assert r.invitation_code == "ABC123"
+    assert r.preferred_language == "id"
 
 
-@pytest.mark.known_bug(
-    "schema: StudentBase.preferred_language is plain `str`, not Literal['id','en'] — "
-    "invalid language codes are silently accepted"
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("role", "admin"),  # admin is never self-serve
+        ("username", "ab"),  # too short
+        ("username", "budi santoso"),  # spaces are not allowed
+        ("password", "short"),  # below the minimum length
+    ],
 )
-def test_km_contract_002_student_create_rejects_bad_language() -> None:
-    from models.student import StudentCreate
+def test_km_contract_002_register_request_rejects(field: str, value: str) -> None:
+    from models.user import RegisterRequest
 
+    payload = {
+        "username": "budi",
+        "password": "rahasia-panjang",
+        "full_name": "Budi",
+        "role": "student",
+        "invitation_code": "ABC123",
+    }
+    payload[field] = value
     with pytest.raises(ValidationError):
-        StudentCreate(full_name="X", preferred_language="fr")
+        RegisterRequest(**payload)
 
 
 # --------------------------------------------------------------------------- #
-# KM-CONTRACT-003 / 004 — StudentOut / StudentProfileOut from ORM attrs
+# KM-CONTRACT-003 / 004 — UserOut never leaks credentials
 # --------------------------------------------------------------------------- #
-def _student_row(**over: object) -> SimpleNamespace:
+def _user_row(**over: object) -> SimpleNamespace:
     now = datetime.now(UTC)
     base = dict(
         id=uuid.uuid4(),
-        full_name="Siswa Uji",
-        email=None,
+        username="budi",
+        password_hash="$2b$12$notarealhash",
+        role="student",
+        full_name="Budi Santoso",
+        is_active=True,
         grade_level=None,
-        accessibility_profile="blind",
         preferred_language="id",
-        voice_settings={},
+        accessibility_profile="blind",
         created_at=now,
-        updated_at=now,
+        last_login_at=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
 
 
-def test_km_contract_003_student_out_from_attributes() -> None:
-    from models.student import StudentOut
+def test_km_contract_003_user_out_from_attributes() -> None:
+    from models.user import UserOut
 
-    out = StudentOut.model_validate(_student_row())
+    out = UserOut.model_validate(_user_row())
     assert isinstance(out.id, uuid.UUID)
     assert isinstance(out.created_at, datetime)
-    assert isinstance(out.updated_at, datetime)
+    assert out.role == "student"
 
 
-def test_km_contract_004_student_profile_out_shape() -> None:
-    from models.student import StudentProfileOut
+def test_km_contract_004_user_out_excludes_password_hash() -> None:
+    """The single most important schema guarantee in the codebase."""
+    from models.user import UserOut
 
-    out = StudentProfileOut.model_validate(
-        _student_row(),
-    )
-    # extended aggregate fields default cleanly
-    assert out.overall_mastery == 0.0
-    assert out.weak_concepts == []
-    assert out.strong_concepts == []
-    assert out.streak_days == 0
-    assert out.last_active_at is None
-
-    filled = StudentProfileOut(
-        **_student_row().__dict__,
-        overall_mastery=0.5,
-        weak_concepts=["pecahan"],
-        strong_concepts=["tata-surya"],
-        streak_days=3,
-        last_active_at=datetime.now(UTC),
-    )
-    assert filled.weak_concepts == ["pecahan"]
+    dumped = UserOut.model_validate(_user_row()).model_dump()
+    assert "password_hash" not in dumped
+    assert not any("password" in key for key in dumped)
 
 
 # --------------------------------------------------------------------------- #
@@ -145,11 +151,9 @@ def test_km_contract_007_quiz_submit_request_field_names() -> None:
         "question_id",
         "student_answer",
         "response_latency_ms",
-        "transcribed_from_audio",
     }
     r = QuizSubmitRequest(quiz_session_id=uuid.uuid4(), question_id="q1", student_answer="A")
     assert r.response_latency_ms is None
-    assert r.transcribed_from_audio is False
 
 
 def test_km_contract_008_quiz_submit_response_defaults_and_bounds() -> None:
@@ -232,30 +236,22 @@ def test_km_contract_012_orm_out_models_from_attributes() -> None:
     assert ex.options == ["2", "3"]
 
 
-def test_km_contract_013_session_models_are_dead_but_valid() -> None:
-    # models/session.py is not wired to any route (documented dead schema in
-    # traceability.md) — still must round-trip so it doesn't rot silently.
-    from models.session import (
-        SessionOut,
-        SessionStartRequest,
-        VoiceChatRequest,
-        VoiceChatResponse,
-    )
+def test_km_contract_013_no_schema_exposes_audio_fields() -> None:
+    """Speech lives in the browser: no API schema should still carry audio URLs."""
+    import models
 
-    sid = uuid.uuid4()
-    assert SessionStartRequest(student_id=sid).mode == "tutoring"
-    SessionOut.model_validate(
-        SimpleNamespace(
-            id=sid,
-            student_id=sid,
-            started_at=datetime.now(UTC),
-            ended_at=None,
-            mode="quiz",
-            summary=None,
-        )
-    )
-    assert VoiceChatRequest(student_id=sid, text="halo").language == "id"
-    assert VoiceChatResponse(session_id=sid, intent="tutoring", response_text="hai").latency_ms == 0
+    offenders: list[str] = []
+    for mod_info in pkgutil.iter_modules(models.__path__):
+        module = importlib.import_module(f"models.{mod_info.name}")
+        for name, obj in vars(module).items():
+            if not (inspect.isclass(obj) and issubclass(obj, BaseModel) and obj is not BaseModel):
+                continue
+            offenders += [
+                f"{name}.{field}"
+                for field in obj.model_fields
+                if any(marker in field for marker in ("audio_url", "audio_uri", "transcrib"))
+            ]
+    assert not offenders, f"audio-era fields still in the API schema: {offenders}"
 
 
 # --------------------------------------------------------------------------- #
@@ -322,7 +318,7 @@ def test_km_contract_015_state_literals_snapshot() -> None:
         "generate_analytics",
         "recommend",
         "accessibility_polish",
-        "speak",
+        "respond",
         "end",
         "interrupt_human",
     )

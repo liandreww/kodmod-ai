@@ -75,9 +75,9 @@ async def delete_session(session_id: str) -> None:
 
 
 # --- semantic helpers used by agents -------------------------------------
-async def store_last_response(session_id: str, text: str, audio_url: str | None = None) -> None:
+async def store_last_response(session_id: str, text: str) -> None:
     """Used by accessibility_agent so 'ulangi' can replay it."""
-    await set_value(session_id, "last_response", {"text": text, "audio_url": audio_url})
+    await set_value(session_id, "last_response", {"text": text})
 
 
 async def fetch_last_response(session_id: str) -> dict | None:
@@ -101,19 +101,10 @@ async def fetch_tutoring_turns(session_id: str) -> list[dict]:
     return [json.loads(x) for x in items]
 
 
-async def set_pacing(session_id: str, rate: float) -> None:
-    await set_value(session_id, "tts_rate", rate)
-
-
-async def get_pacing(session_id: str) -> float:
-    v = await get_value(session_id, "tts_rate")
-    return float(v) if v is not None else settings.TTS_RATE
-
-
 # --- in-flight quiz session ---------------------------------------------
 # LangGraph only checkpoints canonical state when a checkpointer is wired.
-# The voice loop re-enters the graph at `stt` for every utterance with a
-# fresh state, so the multi-turn quiz keeps its progress here instead:
+# The chat loop re-enters the graph at `intent_router` for every utterance
+# with a fresh state, so the multi-turn quiz keeps its progress here instead:
 # `problem_generator` writes it, `intent_router` rehydrates it on the next
 # turn, `update_student_model` advances (or clears) it.
 async def store_quiz_session(session_id: str, data: dict) -> None:

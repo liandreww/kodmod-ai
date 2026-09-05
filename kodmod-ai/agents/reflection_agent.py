@@ -29,7 +29,7 @@ import logging
 from typing import Any
 
 from graphs.state import KODMODState
-from tools.llm_client import get_router_llm  # small, fast model
+from tools.llm_client import get_reflection_llm, language_instruction
 
 log = logging.getLogger(__name__)
 
@@ -76,10 +76,10 @@ async def reflection_node(state: KODMODState) -> dict[str, Any]:
         f"Curriculum context:\n{context_block}"
     )
 
-    llm = get_router_llm()
+    llm = get_reflection_llm()
     raw_resp = await llm.ainvoke(
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + language_instruction()},
             {"role": "user", "content": user_block},
         ]
     )

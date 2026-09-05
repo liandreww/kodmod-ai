@@ -35,17 +35,18 @@ async def upsert_chunks(records: list[dict]) -> int:
     Insert (or replace) chunk rows.
     Each record must have:
       id (str/uuid), text, embedding (list[float]), source, language,
-      concept_id (uuid|None), chunk_index, accessibility_metadata (dict)
+      concept_id (uuid|None), subject_id (uuid|None), document_id (uuid|None),
+      chunk_index, accessibility_metadata (dict)
     """
     if not records:
         return 0
     sql = text("""
         INSERT INTO curriculum_chunks
-          (id, content, embedding, source, language, concept_id,
-           chunk_index, section_title, accessibility_metadata, created_at)
+          (id, content, embedding, source, language, concept_id, subject_id,
+           document_id, chunk_index, section_title, accessibility_metadata, created_at)
         VALUES
           (:id, :content, CAST(:embedding AS vector), :source, :language, :concept_id,
-           :chunk_index, :section_title, CAST(:meta AS jsonb), NOW())
+           :subject_id, :document_id, :chunk_index, :section_title, CAST(:meta AS jsonb), NOW())
         ON CONFLICT (id) DO UPDATE SET
           content = EXCLUDED.content,
           embedding = EXCLUDED.embedding,
@@ -63,6 +64,8 @@ async def upsert_chunks(records: list[dict]) -> int:
                     "source": r.get("source", ""),
                     "language": r.get("language", "id"),
                     "concept_id": r.get("concept_id"),
+                    "subject_id": r.get("subject_id"),
+                    "document_id": r.get("document_id"),
                     "chunk_index": r.get("chunk_index", 0),
                     "section_title": r.get("section_title"),
                     "meta": __import__("json").dumps(r.get("accessibility_metadata", {})),
@@ -78,6 +81,7 @@ async def query(
     *,
     top_k: int = 8,
     concept_id: uuid.UUID | None = None,
+    subject_id: uuid.UUID | None = None,
     language: str | None = None,
 ) -> list[dict]:
     """
@@ -91,6 +95,9 @@ async def query(
     if concept_id:
         where_clauses.append("concept_id = CAST(:concept_id AS uuid)")
         params["concept_id"] = str(concept_id)
+    if subject_id:
+        where_clauses.append("subject_id = CAST(:subject_id AS uuid)")
+        params["subject_id"] = str(subject_id)
     if language:
         where_clauses.append("language = :language")
         params["language"] = language
@@ -120,6 +127,14 @@ async def delete_by_source(source: str) -> int:
     return res.rowcount or 0  # type: ignore[attr-defined]  # CursorResult has rowcount
 
 
+async def delete_by_document(document_id: uuid.UUID | str) -> int:
+    """Remove every chunk produced by one uploaded document."""
+    sql = text("DELETE FROM curriculum_chunks WHERE document_id = CAST(:doc AS uuid)")
+    async with async_session() as session:
+        res = await session.execute(sql, {"doc": str(document_id)})
+    return res.rowcount or 0  # type: ignore[attr-defined]  # CursorResult has rowcount
+
+
 class PgVectorStore:
     """Thin object wrapper over the module-level functions above.
 
@@ -135,17 +150,11 @@ class PgVectorStore:
         filters: dict | None = None,
     ) -> list[dict]:
         filters = filters or {}
-        raw_cid = filters.get("concept_id")
-        concept_id: uuid.UUID | None = None
-        if raw_cid:
-            try:
-                concept_id = raw_cid if isinstance(raw_cid, uuid.UUID) else uuid.UUID(str(raw_cid))
-            except (ValueError, TypeError):
-                concept_id = None
         return await query(
             embedding,
             top_k=top_k,
-            concept_id=concept_id,
+            concept_id=_coerce_uuid(filters.get("concept_id")),
+            subject_id=_coerce_uuid(filters.get("subject_id")),
             language=filters.get("language"),
         )
 
@@ -154,3 +163,15 @@ class PgVectorStore:
 
     async def delete_by_source(self, source: str) -> int:
         return await delete_by_source(source)
+
+
+def _coerce_uuid(value) -> uuid.UUID | None:
+    """Accept a UUID, a string, or None; return None for anything unparseable."""
+    if not value:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None

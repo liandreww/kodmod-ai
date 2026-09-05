@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphs.main_graph import route_after_analyzer, route_after_intent, route_after_scoring
+from graphs.main_graph import route_after_intent, route_after_scoring, route_after_student_model
 
 pytestmark = pytest.mark.unit
 
@@ -31,7 +31,7 @@ def test_route_after_intent_to_problem_generator(intent: str) -> None:  # KM-UNI
         ("analytics", "analytics"),
         ("repeat", "tutoring"),
         ("clarification", "tutoring"),
-        ("stop", "end_speak"),
+        ("stop", "end"),
         ("navigation", "tutoring"),  # unmapped → safe default
         ("unknown", "tutoring"),
     ],
@@ -54,20 +54,38 @@ def test_route_after_scoring_pass(score: float) -> None:  # KM-UNIT-064
     assert route_after_scoring({"quiz_score": score}) == "update_student_model"
 
 
-def test_route_after_analyzer_more_questions_left() -> None:  # KM-UNIT-065
+def test_route_after_scoring_still_fails_below_max_attempts() -> None:
+    # A low score alone stays in the remediation loop while attempts remain.
+    state = {"quiz_score": 0.0, "current_question_attempts": 1}
+    assert route_after_scoring(state) == "tutoring"
+
+
+def test_route_after_scoring_forces_advance_at_max_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression test: a question the student can't clear must not trap the
+    # quiz forever — once QUIZ_MAX_ATTEMPTS_PER_QUESTION is reached, the "pass"
+    # branch fires regardless of score.
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "QUIZ_MAX_ATTEMPTS_PER_QUESTION", 2)
+    state = {"quiz_score": 0.0, "current_question_attempts": 2}
+    assert route_after_scoring(state) == "update_student_model"
+
+
+def test_route_after_student_model_more_questions_left() -> None:  # KM-UNIT-065
     # `current_question_index` has already been advanced by update_student_model;
-    # it still points at a valid question → end this turn (next question is asked
-    # when the student's following utterance re-enters the graph).
+    # it still points at a valid question → loop back to quiz_ask so the next
+    # question is spoken within this same turn.
     state = {"quiz_questions": [{}, {}, {}], "current_question_index": 1}
-    assert route_after_analyzer(state) == "end"
+    assert route_after_student_model(state) == "quiz_ask"
 
 
-def test_route_after_analyzer_questions_exhausted() -> None:  # KM-UNIT-066
+def test_route_after_student_model_questions_exhausted() -> None:  # KM-UNIT-066
     state = {"quiz_questions": [{}, {}], "current_question_index": 2}
-    assert route_after_analyzer(state) == "analytics"
+    assert route_after_student_model(state) == "quiz_analyzer"
 
 
 def test_routers_tolerate_partial_state() -> None:  # KM-UNIT-067
     assert route_after_intent({}) == "tutoring"
     assert route_after_scoring({}) == "tutoring"
-    assert route_after_analyzer({}) == "analytics"  # no KeyError on missing quiz_questions
+    # no KeyError on missing quiz_questions
+    assert route_after_student_model({}) == "quiz_analyzer"

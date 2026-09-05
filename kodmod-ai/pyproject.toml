@@ -1,7 +1,7 @@
 [project]
 name = "kodmod-ai"
 version = "0.1.0"
-description = "Voice-first agentic learning assistant for visually impaired students"
+description = "Agentic learning assistant for visually impaired students"
 authors = [{ name = "KODMOD Team" }]
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -12,7 +12,6 @@ dependencies = [
   "langgraph>=0.2.40",
   "langchain>=0.3.0",
   "langchain-core>=0.3.0",
-  "langchain-anthropic>=0.2.0",
   "langchain-openai>=0.2.0",
   "langchain-community>=0.3.0",
   "langgraph-checkpoint>=1.0.0",
@@ -26,25 +25,22 @@ dependencies = [
   "pydantic>=2.7",
   "pydantic-settings>=2.4",
   "PyJWT>=2.9",
+  "bcrypt>=4.1",
 
   # ---- Database / cache
   "sqlalchemy[asyncio]>=2.0",
   "asyncpg>=0.29",
-  "psycopg[binary]>=3.2",
+  "psycopg[binary,pool]>=3.2",
   "alembic>=1.13",
   "redis[hiredis]>=5.0",
   "pgvector>=0.3.0",
 
-  # ---- RAG / embeddings
+  # ---- RAG
+  # sentence-transformers is here for the cross-encoder reranker only; the
+  # embeddings themselves are OpenAI API calls.
   "sentence-transformers>=3.0",
-  "FlagEmbedding>=1.2.10",
-  "qdrant-client>=1.10",
   "rank-bm25>=0.2.2",
   "pypdf>=4.3",
-
-  # ---- Voice
-  "faster-whisper>=1.0.3",
-  "soundfile>=0.12",
   "numpy>=1.26",
 
   # ---- Misc
@@ -101,7 +97,7 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["agents*", "graphs*", "tools*", "memory*", "rag*", "api*",
            "database*", "models*", "analytics*", "accessibility*",
-           "prompts*", "voice*", "config*"]
+           "prompts*", "config*"]
 
 [tool.ruff]
 line-length = 100
@@ -137,13 +133,14 @@ markers = [
   "contract: schema / API / graph wiring, no I/O (Stage 2)",
   "integration: real Postgres + Redis, stubbed LLM (Stage 3)",
   "api: REST endpoints, real HTTP to the containerized api (Stage 4)",
-  "ws: WebSocket /ws/voice, real WS to the containerized api (Stage 5)",
+  "ws: WebSocket /ws/chat, real WS to the running api (Stage 5)",
   "e2e: end-to-end user journeys, text-mode, real HTTP (Stage 6)",
   "system: black-box compose stack (Stage 7)",
   "perf: performance / load (Stage 8)",
   "security: dynamic security (Stage 9)",
   "readiness: release-readiness gate meta-checks (Stage 10) — traceability, docs, migration policy",
-  "real_llm: hits a real LLM provider; skipped unless KODMOD_RUN_REAL_LLM=1",
+  "real_llm: hits the real OpenAI API; skipped unless KODMOD_RUN_REAL_LLM=1",
+  "no_llm_stub: opts out of the autouse LLM stub — for tests of tools/llm_client.py itself",
   "slow: takes more than a few seconds",
   "db: needs Postgres",
   "redis: needs Redis",

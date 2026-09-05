@@ -161,15 +161,13 @@ def test_km_sec_025_no_sql_string_interpolation() -> None:
 # --------------------------------------------------------------------------- #
 # KM-SEC-026 — ClassroomAggregator roster raw SQL stays parameterized
 # --------------------------------------------------------------------------- #
-@pytest.mark.known_bug(
-    "#20 — ClassroomAggregator queries the missing classroom_enrollment table; once it runs, "
-    "the roster query must be parameterized and leak 0 rows for a random/injected classroom id"
-)
-async def test_km_sec_026_classroom_roster_parameterized(client, teacher_factory) -> None:  # type: ignore[no-untyped-def]
+async def test_km_sec_026_cohort_roster_parameterized(client, teacher_factory) -> None:  # type: ignore[no-untyped-def]
+    """The cohort roster is a parameterized ORM query; no id is interpolated at all."""
     _tid, tok = await teacher_factory()
     r = await client.get(
-        f"/analytics/classroom/{uuid.uuid4()}", headers={"Authorization": f"Bearer {tok}"}
+        "/analytics/cohort",
+        params={"window": "week'; DROP TABLE users; --"},
+        headers={"Authorization": f"Bearer {tok}"},
     )
-    assert r.status_code == 200
-    body = r.json()
-    assert body.get("n_students", 0) == 0
+    # An injected window is rejected by the Literal, never reaches SQL.
+    assert r.status_code == 422

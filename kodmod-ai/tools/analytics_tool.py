@@ -56,27 +56,24 @@ def get_student_analytics_tool() -> StructuredTool:
     )
 
 
-class ClassroomAnalyticsInput(BaseModel):
-    classroom_id: str
+class CohortAnalyticsInput(BaseModel):
     window: Literal["week", "month", "all"] = "week"
 
 
-async def fetch_classroom_analytics(
-    classroom_id: str, *, window: Literal["today", "week", "month", "all"] = "week"
+async def fetch_cohort_analytics(
+    *, window: Literal["today", "week", "month", "all"] = "week"
 ) -> dict:
-    from analytics.aggregator import ClassroomAggregator
+    from analytics.aggregator import CohortAggregator
 
-    return await ClassroomAggregator().summarise(
-        classroom_id=uuid.UUID(classroom_id), window=window
-    )
+    return await CohortAggregator().summarise(window=window)
 
 
-def get_classroom_analytics_tool() -> StructuredTool:
+def get_cohort_analytics_tool() -> StructuredTool:
     return StructuredTool.from_function(
-        coroutine=fetch_classroom_analytics,
-        name="get_classroom_analytics",
+        coroutine=fetch_cohort_analytics,
+        name="get_cohort_analytics",
         description=(
-            "Compute aggregate analytics for an entire classroom (used by the teacher dashboard)."
+            "Compute aggregate analytics across every student (used by the teacher dashboard)."
         ),
-        args_schema=ClassroomAnalyticsInput,
+        args_schema=CohortAnalyticsInput,
     )

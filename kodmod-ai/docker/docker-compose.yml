@@ -7,10 +7,16 @@ services:
       POSTGRES_PASSWORD: kodmod
       POSTGRES_DB: kodmod
     ports:
-      - "5432:5432"
+      # Host-side only: mapped off 5432 because a native Postgres install can
+      # also be bound there, and Windows will silently route new connections
+      # to whichever process wins that ambiguity instead of this container.
+      # Internal traffic (the `api` service talking to `postgres:5432`) is
+      # unaffected — this only changes what host tools connect to.
+      - "5433:5432"
     volumes:
       - kodmod-pgdata:/var/lib/postgresql/data
-      - ../database/schema.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+    # No schema is mounted here on purpose. `database/models.py` is the source
+    # of truth and Alembic deploys it: run `make migrate` after the first boot.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kodmod -d kodmod"]
       interval: 5s
@@ -30,43 +36,31 @@ services:
       timeout: 5s
       retries: 10
 
-  qdrant:
-    image: qdrant/qdrant:v1.10.1
-    container_name: kodmod-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - kodmod-qdrantdata:/qdrant/storage
-    profiles: ["qdrant"]
-
-  api:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: kodmod-api
-    depends_on:
-      postgres: { condition: service_healthy }
-      redis:    { condition: service_healthy }
-    env_file:
-      - ../.env
-    environment:
-      DB_HOST: postgres
-      REDIS_HOST: redis
-    ports:
-      - "8000:8000"
-    volumes:
-      - kodmod-audio:/var/lib/kodmod/audio
-      - kodmod-uploads:/var/lib/kodmod/uploads
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/live"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+  # api:
+  #   build:
+  #     context: ..
+  #     dockerfile: docker/Dockerfile
+  #   container_name: kodmod-api
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #     redis:    { condition: service_healthy }
+  #   env_file:
+  #     - ../.env
+  #   environment:
+  #     DB_HOST: postgres
+  #     REDIS_HOST: redis
+  #     UPLOAD_DIR: /var/lib/kodmod/uploads
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - kodmod-uploads:/var/lib/kodmod/uploads
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-fsS", "http://localhost:8000/live"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 5
 
 volumes:
   kodmod-pgdata:
   kodmod-redisdata:
-  kodmod-qdrantdata:
-  kodmod-audio:
   kodmod-uploads:

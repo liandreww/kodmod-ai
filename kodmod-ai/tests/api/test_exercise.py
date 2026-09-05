@@ -57,26 +57,25 @@ async def test_km_api_061_exercises_by_concept_empty(client, student_factory, au
     assert r.json() == []
 
 
-@pytest.mark.known_bug(
-    "#7 — POST /exercise/generate imports agents.problem_generator.generate_questions_for_student "
-    "which does not exist -> 500"
-)
 async def test_km_api_062_generate(client, student_factory, concept_ids, auth_headers) -> None:  # type: ignore[no-untyped-def]
     st, tok = await student_factory()
     r = await client.post(
         "/exercise/generate",
         headers=auth_headers(tok),
-        json={"student_id": str(st.id), "concept_id": concept_ids["pecahan"], "n_questions": 3},
+        json={"concept_id": concept_ids["pecahan"], "n_questions": 3},
     )
     assert r.status_code == 200
     assert "exercises" in r.json()
 
 
-async def test_km_api_063_generate_idor(client, student_factory, auth_headers) -> None:  # type: ignore[no-untyped-def]
-    _st, tok = await student_factory()
+async def test_km_api_063_generate_rejects_non_students(
+    client, teacher_factory, auth_headers
+) -> None:  # type: ignore[no-untyped-def]
+    """Exercise generation is a learner action; a teacher has no mastery profile."""
+    _teacher, tok = await teacher_factory()
     r = await client.post(
         "/exercise/generate",
         headers=auth_headers(tok),
-        json={"student_id": str(uuid.uuid4()), "n_questions": 3},
+        json={"n_questions": 3},
     )
     assert r.status_code == 403

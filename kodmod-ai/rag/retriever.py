@@ -3,11 +3,11 @@ KODMOD AI — RAG Retriever (orchestration layer)
 ===============================================
 
 Single entry point used by `tools/rag_tool.py` and the LangGraph
-`rag_retrieval_node`. Selects the configured backend, embeds the query,
-performs vector search, and runs the cross-encoder reranker.
+`rag_retrieval_node`. Embeds the query, performs the pgvector search, and runs
+the cross-encoder reranker.
 
 This module is intentionally thin — it composes:
-    embeddings.embed_text  +  stores.<backend>.query  +  reranker.rerank
+    embeddings.embed_text  +  pgvector_store.query  +  reranker.rerank
 """
 
 from __future__ import annotations
@@ -18,27 +18,20 @@ import uuid
 from config.settings import settings
 from rag.embeddings import embed_text
 from rag.reranker import rerank
+from rag.stores import pgvector_store
 
 logger = logging.getLogger(__name__)
-
-
-def _store():
-    """Lazy import of the configured backend so missing optional deps don't break startup."""
-    if settings.VECTOR_BACKEND == "qdrant":
-        from rag.stores import qdrant_store as _s
-    else:
-        from rag.stores import pgvector_store as _s
-    return _s
 
 
 async def retrieve(
     query: str,
     *,
     concept_id: uuid.UUID | None = None,
+    subject_id: uuid.UUID | None = None,
     language: str | None = None,
     top_k: int | None = None,
     rerank_top_k: int | None = None,
-    use_reranker: bool = True,
+    use_reranker: bool | None = None,
 ) -> list[dict]:
     """
     Returns ranked chunks: list of dicts with keys
@@ -48,12 +41,15 @@ async def retrieve(
         return []
     top_k = top_k or settings.RAG_TOP_K
     rerank_top_k = rerank_top_k or settings.RAG_RERANK_TOP_K
+    if use_reranker is None:
+        use_reranker = settings.RAG_RERANK_ENABLED
 
     embedding = (await embed_text([query]))[0]
-    candidates = await _store().query(
+    candidates = await pgvector_store.query(
         embedding,
         top_k=top_k,
         concept_id=concept_id,
+        subject_id=subject_id,
         language=language or settings.DEFAULT_LANGUAGE,
     )
     if not candidates:
@@ -70,11 +66,11 @@ async def retrieve(
 async def rag_retrieval_node(state) -> dict:
     """
     LangGraph node wrapping `retrieve()`. Reads the latest student
-    utterance from `state["transcribed_text"]` (or, if missing, the last
-    HumanMessage), retrieves grounding chunks, and writes them into
-    `state["retrieved_docs"]`.
+    utterance from `state["user_input"]` (or, if missing, the last
+    HumanMessage), retrieves grounding chunks scoped to the selected subject,
+    and writes them into `state["retrieved_docs"]`.
     """
-    query = state.get("transcribed_text") or ""
+    query = state.get("user_input") or ""
     if not query and state.get("messages"):
         # Fall back to the most recent HumanMessage content.
         for m in reversed(state["messages"]):
@@ -89,19 +85,21 @@ async def rag_retrieval_node(state) -> dict:
     if not query.strip():
         return {"retrieved_docs": [], "next_action": "tutor", "last_node": "rag_retrieval"}
 
-    concept_id = None
-    if cid := state.get("current_concept_id"):
-        try:
-            import uuid as _uuid
-
-            concept_id = _uuid.UUID(str(cid))
-        except (ValueError, TypeError):
-            concept_id = None
-
     docs = await retrieve(
         query,
-        concept_id=concept_id,
-        language=state.get("learning_profile", {}).get("preferred_language"),
+        concept_id=_as_uuid(state.get("current_concept_id")),
+        subject_id=_as_uuid(state.get("subject_id")),
+        language=state.get("learning_profile", {}).get("language"),
     )
     logger.info("RAG retrieved %d chunks for query=%r", len(docs), query[:64])
     return {"retrieved_docs": docs, "next_action": "tutor", "last_node": "rag_retrieval"}
+
+
+def _as_uuid(value) -> uuid.UUID | None:
+    """Coerce a state value to a UUID, or None when it is absent or malformed."""
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None

@@ -1,24 +1,23 @@
 """Shared pytest fixtures for the KODMOD test suite.
 
 Stage map (see docs/testplan/):
-  0 static      1 unit        2 contract    3 integration   4 api
-  5 ws          6 e2e         7 system      8 perf          9 security
+  0 static      1 unit        2 contract    3 integration
+  4 api         5 ws          6 e2e         9 security
 
 Only the infra runs in Docker (docker/docker-compose.test.yml: postgres, redis,
 llm-stub). `db-init` and `api` run natively on the host, as do the test SCRIPTS:
   * Stage 1 (unit) needs no service at all.
   * Stage 3 (integration) calls Python functions directly in this process and
     talks to Postgres/Redis over their published ports.
-  * Stage 4-9 (api/ws/e2e/system/perf/security) talk to the host `api` process
+  * Stage 4+ (api/ws/e2e/security) talk to the host `api` process
     (`python -m scripts.serve_test_api`) over HTTP/WS — see the `client`/`ws_url`
     fixtures below. `scripts/run_tests.{ps1,sh}` start/stop it for you.
 
 Environment is forced to ``test`` BEFORE any project import so the cached
 ``config.settings`` singleton picks up test values. For Stage 1/3, LLM and
 embedding calls made *in this process* are stubbed by autouse fixtures unless
-a test is marked ``real_llm``. For Stage 4+, the host `api` stubs its own
-LLM/embedding calls via env set by scripts/serve_test_api
-(KODMOD_LLM_PROVIDER=vllm -> the llm-stub service).
+a test is marked ``real_llm``. For Stage 4+, the host `api` points
+``OPENAI_BASE_URL`` at the llm-stub service instead (scripts/serve_test_api).
 """
 
 from __future__ import annotations
@@ -35,18 +34,15 @@ import pytest
 # --------------------------------------------------------------------------- #
 os.environ.setdefault("ENV", "test")
 os.environ.setdefault("DEBUG", "false")
-os.environ.setdefault("KODMOD_LLM_PROVIDER", "anthropic")
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
+for _role in ("ROUTER", "TUTOR", "QUIZ", "SCORING", "RECOMMENDATION", "REFLECTION"):
+    os.environ.setdefault(f"LLM_{_role}_MODEL", f"stub-{_role.lower()}")
 os.environ.setdefault("DB_NAME", "kodmod_test")
 os.environ.setdefault("DB_HOST", os.environ.get("DB_HOST", "localhost"))
 os.environ.setdefault("DB_PORT", os.environ.get("DB_PORT", "5433"))
 os.environ.setdefault("REDIS_HOST", os.environ.get("REDIS_HOST", "localhost"))
 os.environ.setdefault("REDIS_PORT", os.environ.get("REDIS_PORT", "6380"))
-os.environ.setdefault("EMBEDDING_DIM", "1024")
-os.environ.setdefault("VECTOR_BACKEND", "pgvector")
-os.environ.setdefault("STT_ENABLED", "false")
-os.environ.setdefault("TTS_ENABLED", "false")
-os.environ.setdefault("AUDIO_DIR", os.path.join(os.getcwd(), ".runtime", "audio"))
+os.environ.setdefault("EMBEDDING_DIM", "1536")
 os.environ.setdefault("UPLOAD_DIR", os.path.join(os.getcwd(), ".runtime", "uploads"))
 os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
 os.environ.setdefault("JWT_SECRET", "test-secret-not-for-prod-0123456789abcdef")
@@ -58,14 +54,17 @@ STUDENT_BLIND = uuid.UUID("11111111-1111-1111-1111-111111111111")
 STUDENT_LOWVISION = uuid.UUID("11111111-1111-1111-1111-111111111112")
 STUDENT_STRONG = uuid.UUID("11111111-1111-1111-1111-111111111113")
 TEACHER_A = uuid.UUID("22222222-2222-2222-2222-222222222221")
-CLASSROOM_A = uuid.UUID("33333333-3333-3333-3333-333333333331")
+ADMIN_A = uuid.UUID("33333333-3333-3333-3333-333333333331")
+
+# Every generated account shares this password so tests can log in for real.
+TEST_PASSWORD = "test-password-123"
 
 
 # --------------------------------------------------------------------------- #
 # Markers are registered in pyproject.toml [tool.pytest.ini_options].markers
 # (single source of truth — keep the two lists in sync if either changes):
-#   static, unit, contract, integration, api, ws, e2e, system, perf, security,
-#   readiness, real_llm, slow, db, redis, known_bug
+#   static, unit, contract, integration, api, ws, e2e, security,
+#   real_llm, slow, db, redis, known_bug
 # --------------------------------------------------------------------------- #
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     skip_real = pytest.mark.skip(reason="real LLM disabled (set KODMOD_RUN_REAL_LLM=1)")
@@ -87,41 +86,57 @@ def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 # --------------------------------------------------------------------------- #
 # LLM / embedding stubs (autouse). Marker ``real_llm`` opts out.
 # --------------------------------------------------------------------------- #
+_LLM_GETTERS = (
+    "get_router_llm",
+    "get_tutor_llm",
+    "get_quiz_llm",
+    "get_scoring_llm",
+    "get_recommendation_llm",
+    "get_reflection_llm",
+)
+
+_LLM_CONSUMERS = (
+    "tools.llm_client",
+    "agents.intent_router",
+    "agents.tutoring_agent",
+    "agents.quiz_agent",
+    "agents.problem_generator",
+    "agents.scoring_agent",
+    "agents.quiz_analyzer",
+    "agents.recommendation_agent",
+    "agents.reflection_agent",
+    "accessibility.simplifier",
+    "accessibility.narration",
+    "analytics.insights",
+)
+
+
 @pytest.fixture(autouse=True)
 def stub_llms(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch every per-agent LLM getter with a deterministic fake.
+    """Replace every LLM role getter with a deterministic fake.
 
-    Getters are patched in the *consuming* module (they are imported by name at
-    module load), not in tools.llm_client.
+    Agent modules do `from tools.llm_client import get_tutor_llm`, binding the
+    getter at import time, so patching `tools.llm_client` alone would not reach
+    them. Every consuming module is patched, plus the source of truth.
     """
     if "real_llm" in request.keywords and RUN_REAL_LLM:
+        return
+    # Tests of the client itself must see the real getters.
+    if "no_llm_stub" in request.keywords:
         return
     try:
         from tests._fakes.fake_chat import make_fake_chat
     except Exception:  # pragma: no cover - fakes not written yet during scaffold
         return
 
-    targets = {
-        "agents.intent_router": ["get_router_llm"],
-        "agents.tutoring_agent": ["get_tutor_llm"],
-        "agents.quiz_agent": ["get_quiz_llm"],
-        "agents.problem_generator": ["get_quiz_llm"],
-        "agents.scoring_agent": ["get_scoring_llm"],
-        "agents.quiz_analyzer": ["get_scoring_llm"],
-        "agents.recommendation_agent": ["get_recommendation_llm"],
-        "agents.reflection_agent": ["get_router_llm"],
-        "accessibility.simplifier": ["get_quiz_llm"],
-        "accessibility.narration": ["get_tutor_llm"],
-        "analytics.insights": ["get_recommendation_llm"],
-    }
     import importlib
 
-    for mod_name, getters in targets.items():
+    for mod_name in _LLM_CONSUMERS:
         try:
             mod = importlib.import_module(mod_name)
         except Exception:
             continue
-        for getter in getters:
+        for getter in _LLM_GETTERS:
             if hasattr(mod, getter):
                 role = getter.replace("get_", "").replace("_llm", "")
                 monkeypatch.setattr(mod, getter, lambda *a, _r=role, **k: make_fake_chat(_r))
@@ -155,18 +170,17 @@ async def db_engine():  # type: ignore[no-untyped-def]
     from database.session import close_db, get_engine, init_db
 
     await init_db()
-    # Build ORM schema + curriculum_chunks DDL (idempotent).
     try:
         from sqlalchemy import text
 
         from database.models import Base
-        from scripts.create_test_db import _DDL  # type: ignore[attr-defined]
+        from scripts.create_test_db import _EXTENSIONS
 
         engine = get_engine()
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            for stmt in _DDL:
+            for stmt in _EXTENSIONS:
                 await conn.execute(text(stmt))
+            await conn.run_sync(Base.metadata.create_all)
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"test database unavailable: {exc}")
     yield get_engine()
@@ -222,7 +236,7 @@ async def redis_client() -> AsyncIterator[object]:
 # --------------------------------------------------------------------------- #
 # HTTP/WS client against the real `api` process (Stage 4-9).
 #
-# Only the infra runs in Docker (postgres, redis, llm-stub — see
+# Only the infra runs in Docker (postgres, redis, llm-stub, see
 # docker/docker-compose.test.yml). `db-init` and `api` run natively on the host.
 # Test *scripts* run natively too and talk to the host `api` over :8000.
 # Bring it up first (or just let scripts/run_tests.{ps1,sh} do it):
@@ -232,10 +246,9 @@ async def redis_client() -> AsyncIterator[object]:
 #   python -m scripts.serve_test_api
 #
 # `KODMOD_API_BASE_URL` overrides the default http://localhost:8000. The host
-# `api` gets its LLM/embedding stub via env set by scripts/serve_test_api
-# (KODMOD_LLM_PROVIDER=vllm -> http://localhost:8099/v1) — the
-# stub_llms/stub_embeddings fixtures above only matter for Stage 1/3, which call
-# Python functions directly in the host pytest process.
+# `api` gets its stub via OPENAI_BASE_URL, set by scripts/serve_test_api to
+# http://localhost:8099/v1. The stub_llms/stub_embeddings fixtures above only
+# matter for Stage 1/3, which call Python functions in the pytest process.
 # --------------------------------------------------------------------------- #
 API_BASE_URL = os.environ.get("KODMOD_API_BASE_URL", "http://localhost:8000")
 
@@ -256,15 +269,15 @@ async def client(api_base_url: str):  # type: ignore[no-untyped-def]
 
 @pytest.fixture
 def ws_url(api_base_url: str) -> str:
-    """ws://localhost:8000/ws/voice — real WebSocket to the containerized api."""
-    return api_base_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws/voice"
+    """ws://localhost:8000/ws/chat — real WebSocket to the running api."""
+    return api_base_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws/chat"
 
 
 @pytest.fixture(scope="session")
 def fastapi_app():  # type: ignore[no-untyped-def]
     """Static introspection only (Stage 2 contract): route/schema checks without
     running the lifespan or needing any container up. Do NOT use this for
-    behavioral testing — use `client` against the real container for that.
+    behavioral testing; use `client` against the running api for that.
     """
     from api.main import app as fastapi_app
 
@@ -302,41 +315,58 @@ def auth_headers():  # type: ignore[no-untyped-def]
     return _headers
 
 
+_DEFAULT_NAMES = {"student": "Siswa Uji", "teacher": "Guru Uji", "admin": "Admin Uji"}
+
+
 @pytest.fixture
-async def student_factory(db_session):  # type: ignore[no-untyped-def]
-    """Insert an ORM Student and return (student, token)."""
-    created: list = []
+async def user_factory(db_session):  # type: ignore[no-untyped-def]
+    """Insert a real `users` row and return (user, bearer_token).
 
-    async def _make(**overrides):  # type: ignore[no-untyped-def]
-        from database.models import Student
+    Every account gets `TEST_PASSWORD`, so a test can either use the token
+    directly or go through POST /auth/login like a real client would.
+    """
 
+    async def _make(role: str = "student", **overrides):  # type: ignore[no-untyped-def]
+        from api.security import hash_password
+        from database.models import User
+
+        uid = overrides.pop("id", uuid.uuid4())
         data = {
-            "id": overrides.pop("id", uuid.uuid4()),
-            "full_name": overrides.pop("full_name", "Siswa Uji"),
-            "accessibility_profile": overrides.pop("accessibility_profile", "blind"),
-            "preferred_language": overrides.pop("preferred_language", "id"),
+            "id": uid,
+            "username": overrides.pop("username", f"{role}-{uid.hex[:8]}"),
+            "password_hash": hash_password(TEST_PASSWORD),
+            "role": role,
+            "full_name": overrides.pop("full_name", _DEFAULT_NAMES.get(role, "Pengguna Uji")),
         }
         data.update(overrides)
-        student = Student(**data)
-        db_session.add(student)
+        user = User(**data)
+        db_session.add(user)
         await db_session.flush()
-        created.append(student)
-        return student, _make_token(student.id, "student")
+        return user, _make_token(user.id, role)
 
     return _make
 
 
 @pytest.fixture
-async def teacher_factory(db_session):  # type: ignore[no-untyped-def]
+async def student_factory(user_factory):  # type: ignore[no-untyped-def]
     async def _make(**overrides):  # type: ignore[no-untyped-def]
-        from database.models import Teacher
+        return await user_factory("student", **overrides)
 
-        data = {"id": overrides.pop("id", uuid.uuid4()), "full_name": "Guru Uji"}
-        data.update(overrides)
-        teacher = Teacher(**data)
-        db_session.add(teacher)
-        await db_session.flush()
-        return teacher, _make_token(teacher.id, "teacher")
+    return _make
+
+
+@pytest.fixture
+async def teacher_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**overrides):  # type: ignore[no-untyped-def]
+        return await user_factory("teacher", **overrides)
+
+    return _make
+
+
+@pytest.fixture
+async def admin_factory(user_factory):  # type: ignore[no-untyped-def]
+    async def _make(**overrides):  # type: ignore[no-untyped-def]
+        return await user_factory("admin", **overrides)
 
     return _make
 

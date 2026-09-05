@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from agents.accessibility_agent import (
-    _add_ssml_breaks,
+    _normalize_dashes,
     _normalize_numbers,
     _replace_visual_refs,
     _should_simplify,
@@ -63,10 +63,12 @@ def test_normalize_numbers_spells_decimals() -> None:  # KM-UNIT-085
     assert "10 titik 75" in out
 
 
-def test_add_ssml_breaks() -> None:  # KM-UNIT-086
-    out = _add_ssml_breaks("Benar? Bagus! Lalu. Selanjutnya.")
-    assert out.count("400ms") == 2  # break after ? and after !
-    assert "250ms" in out  # shorter break after ". " before a capital
+def test_normalize_dashes_becomes_commas() -> None:  # KM-UNIT-086
+    """Typographic dashes must not survive: a screen reader reads them unevenly."""
+    out = _normalize_dashes("Pecahan — bagian dari keseluruhan – misalnya setengah.")
+    assert "—" not in out
+    assert "–" not in out
+    assert "Pecahan, bagian dari keseluruhan, misalnya setengah." == out
 
 
 @pytest.mark.parametrize(
@@ -91,4 +93,5 @@ async def test_pipeline_fast_path_order() -> None:  # KM-UNIT-090
     assert "**" not in out  # markdown stripped
     assert "lihat gambar" not in out.lower()  # visual ref replaced
     assert "3 titik 2" in out  # numbers normalized
-    assert "400ms" in out  # SSML pacing added last
+    # No pacing markup: whatever this node emits is also displayed on screen.
+    assert "<break" not in out
